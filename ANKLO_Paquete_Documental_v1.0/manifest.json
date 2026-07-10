@@ -1,0 +1,32 @@
+[
+  {
+    "file": "Bosquejo_Arquitectura_ERP_ANKLO_OS_v1.0.md",
+    "bytes": 22242,
+    "sha256": "e36b7978d2ccae5e546d2c39cd55035673583c8665e8567ccdd7f472fdc354f3"
+  },
+  {
+    "file": "Bosquejo_Arquitectura_ERP_ANKLO_OS_v1.0.pdf",
+    "bytes": 80027,
+    "sha256": "3142a4e495268e659a7d270ab07c738743f95b7c1d8c942afad57d0409a17499"
+  },
+  {
+    "file": "Manual_Maestro_Supervision_Anclajes_ANKLO_v1.0.md",
+    "bytes": 43644,
+    "sha256": "cc0678be09ccaf9cd53deb692d8aed8523990c5c9c1f96bf02b38b1e993a912a"
+  },
+  {
+    "file": "Manual_Maestro_Supervision_Anclajes_ANKLO_v1.0.pdf",
+    "bytes": 127088,
+    "sha256": "761441b3e1605879685f72a5238b777f57910fe8984da468ca9c5dde7aa62f64"
+  },
+  {
+    "file": "Resumen_Maestro_Proyecto_ANKLO_v1.0.md",
+    "bytes": 12037,
+    "sha256": "01f15b2b97fc073f02262e451353c166322fb99f32c945385ef8d609561b7992"
+  },
+  {
+    "file": "Resumen_Maestro_Proyecto_ANKLO_v1.0.pdf",
+    "bytes": 37175,
+    "sha256": "721cd9aa6f5a035f50c210ed757cac286de856c4150d465d4c6f9a89723003fd"
+  }
+]
