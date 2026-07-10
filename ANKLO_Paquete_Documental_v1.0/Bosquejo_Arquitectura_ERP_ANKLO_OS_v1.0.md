@@ -70,6 +70,7 @@ anklo-os/
 - **Privacidad desde el diseño:** minimización, retención, cifrado, acceso por necesidad [EC-05, EC-06].
 - **Auditabilidad:** usuario, fecha, origen, antes/después y motivo.
 - **IA subordinada:** propone; una persona competente aprueba.
+- **Decisiones sobre personas y seguridad:** se prohíben decisiones exclusivamente automatizadas sobre conformidad estructural, seguridad, disciplina, aptitud laboral, pagos o derechos de trabajadores.
 
 ## 4. Perfiles y permisos
 
@@ -93,7 +94,7 @@ Permisos en tres niveles: acción sobre módulo, alcance por organización/obra 
 
 ### 5.1 Núcleo y administración
 
-Organizaciones, sucursales, obras, frentes, ubicaciones, usuarios, roles, equipos de trabajo, catálogos, numeraciones, monedas, unidades, zonas horarias, auditoría y configuración.
+Organizaciones, sucursales, obras, frentes, ubicaciones, usuarios, roles, equipos de trabajo, catálogos, numeraciones, monedas, unidades, zonas horarias, auditoría y configuración. Incluye un servicio transversal de notificaciones y escalamiento con gravedad, evento de origen, destinatario, canal, reconocimiento, plazo y escalamiento, sin imponer un canal o proveedor concreto.
 
 ### 5.2 CRM/cliente y contratos
 
@@ -163,7 +164,7 @@ Solicitud, anticipo, gasto, comprobante, OCR opcional, centro de costo, polític
 
 ### 5.14 Compras y proveedores
 
-Solicitud, cotización, aprobación, orden, recepción, factura y evaluación. Catálogo de productos aprobados separado del catálogo comercial.
+Solicitud, cotización, aprobación, orden, recepción, factura y evaluación. Catálogo de productos aprobados separado del catálogo comercial. Cada proveedor se clasifica según su papel en el tratamiento de datos y, cuando actúe como encargado, se aplican los requisitos contractuales correspondientes.
 
 ### 5.15 Reportes y BI
 
@@ -177,6 +178,7 @@ Partes diarios, informes semanales, dossier, inventario de entrada/salida, certi
 - Detección de datos incoherentes: curado anterior a inserción, lote vencido, herramienta sin calibración, profundidad fuera de rango configurado.
 - Pronóstico de consumo y duración con intervalos de incertidumbre.
 - Prohibido generar valores de instalación no presentes en fuente aprobada.
+- La interacción con IA y la decisión humana de revisión se registran por separado y permanecen relacionadas, sin sobrescribir la solicitud, las fuentes, la salida, el revisor, la decisión ni su motivo.
 
 ## 6. Modelo de datos de alto nivel
 
@@ -197,6 +199,7 @@ Asset 1---n AssetMovement
 StockItem/Lot 1---n StockMovement
 Expense n---1 Project / Worker / CostCenter
 Certificate n---1 Worker or Asset
+AIInteraction 1---n HumanReviewDecision
 ```
 
 ### 6.2 Tablas críticas
@@ -205,13 +208,17 @@ Certificate n---1 Worker or Asset
 
 **AnchorSystemVersion**: producto, aprobación, MPII, rango de temperatura, método de perforación, condición de orificio, tabla de curado en estructura versionada, vigencia y aprobador. No se modifica retroactivamente; se crea nueva versión.
 
-**AuditEvent**: actor, acción, entidad, id, timestamp, origen, before_json, after_json, razón, correlation_id.
+**AuditEvent**: actor, acción, entidad, id, timestamp, origen, before_json, after_json, razón, correlation_id. Es append-only para las interfaces ordinarias; toda corrección genera un nuevo evento o una revisión enlazada y nunca modifica silenciosamente el evento anterior.
+
+**AIInteraction / HumanReviewDecision**: solicitud, fuentes, salida y contexto de la interacción; revisor, decisión, motivo y timestamp de la revisión humana, como registros separados y relacionados.
 
 **StockMovement**: producto/lote, origen, destino, cantidad, unidad, tipo, referencia, responsable, fecha y costo.
 
 ### 6.3 Multiempresa y seguridad en datos
 
 Toda tabla de negocio lleva `organization_id`. Las consultas se filtran en servicio y, donde sea viable, mediante Row Level Security de PostgreSQL. Los IDs públicos son UUID/ULID; los números de documento son secuencias por empresa/obra.
+
+Los archivos se aíslan por organización mediante autorización en el servidor, namespaces o prefijos separados, claves no predecibles y buckets no públicos. El acceso utiliza URLs firmadas de corta duración y pruebas automatizadas verifican que una organización no pueda acceder a archivos de otra.
 
 ## 7. Flujos de estado
 
@@ -238,23 +245,28 @@ Lista de tareas asignadas, planos ligeros previamente descargados, catálogos ne
 ### 8.2 Estrategia
 
 - IndexedDB para datos locales cifrados cuando la plataforma lo permita.
-- Cada comando lleva `client_operation_id` idempotente.
+- Los catálogos disponibles offline son de solo lectura.
+- Las operaciones críticas se expresan como comandos con `client_operation_id` idempotente.
 - Sincronización por eventos; el servidor confirma o rechaza con motivo.
-- Conflictos: campos críticos se bloquean o exigen revisión; notas/fotos pueden fusionarse.
+- Los registros aprobados no se sobrescriben; todo cambio posterior genera una revisión o evento relacionado.
+- Los conflictos críticos requieren resolución humana. Las notas y evidencias pueden añadirse o fusionarse de forma controlada.
+- El inventario se modifica exclusivamente mediante movimientos, también durante la sincronización.
 - Indicador visible de estado: local, en cola, sincronizado, conflicto.
 - Nunca afirmar “guardado” si solo está en memoria.
 
 ## 9. Seguridad y privacidad
 
-- MFA para roles sensibles.
+- MFA obligatorio para administradores y aprobadores críticos, con preferencia por WebAuthn, passkeys o llaves de seguridad; TOTP es alternativa y SMS no debe ser la opción principal.
 - Contraseñas mediante proveedor seguro/OIDC; no diseñar criptografía propia.
-- TLS, cifrado de almacenamiento, secretos fuera del repositorio.
+- TLS, cifrado de almacenamiento y capacidades mínimas de seguridad HTTP, incluidas cabeceras y controles seguros acordes con el despliegue.
+- Secretos fuera del repositorio, administrados mediante un gestor seguro con control de acceso y rotación.
 - Acceso mínimo, sesiones revocables y registro de exportaciones.
 - URLs firmadas de corta duración para archivos.
-- Antimalware en cargas cuando se despliegue a producción.
+- Todo despliegue productivo que permita cargas aplica controles antimalware antes de liberar o procesar archivos, con cuarentena y tratamiento seguro de fallos.
 - Retención y eliminación por categoría; respaldo no equivale a archivo eterno.
-- Evaluación de impacto para tratamiento intensivo o sensible cuando corresponda.
+- La privacidad sigue un flujo verificable: inventario de actividades de tratamiento, clasificación de datos, aplicación documentada del modelo de tratamiento a gran escala cuando corresponda, evaluación de impacto y determinación de DPD únicamente si se configura el supuesto legal.
 - Fotos/GPS solo con finalidad definida; evitar vigilancia innecesaria.
+- La respuesta a incidentes de seguridad y vulneraciones de datos comprende detección, contención, evaluación, preservación de registros, escalamiento, recuperación y análisis de las notificaciones que correspondan según aplicabilidad y plazos legales.
 
 ## 10. Informes PDF
 
@@ -270,6 +282,8 @@ Plantillas versionadas con número, QR de verificación, zona de firmas y hash/r
 8. Dossier de cierre.
 
 El PDF se genera desde datos ya aprobados; no permite editar el contenido final sin crear una revisión.
+
+Los archivos fotográficos originales y los metadatos de evidencia disponibles se preservan; toda transformación produce un derivado vinculado y un registro de cambios, sin sobrescribir el original. El hash permite comprobar la integridad o coincidencia del archivo, pero no demuestra por sí solo lugar, fecha, autoría material ni admisibilidad jurídica.
 
 ## 11. KPIs del sistema
 
@@ -317,9 +331,9 @@ Compras, mantenimiento, portal de cliente, BI, integraciones y RAG.
 3. Usar tipos estrictos, validación servidor y pruebas de reglas críticas.
 4. Nunca aceptar código de IA que omita autorización, transacciones o manejo de errores.
 5. Generar datos ficticios; no usar datos reales de trabajadores en desarrollo.
-6. Revisar dependencias, licencias y vulnerabilidades.
+6. Revisar automáticamente dependencias, licencias y vulnerabilidades dentro del proceso de integración, sin imponer una herramienta específica.
 7. CI obligatoria: formato, lint, tipos, pruebas, migración y build.
-8. Copia de seguridad y prueba de restauración antes de producción.
+8. Definir continuidad operacional, RTO y RPO mediante análisis y ejecutar pruebas periódicas de restauración; sus valores numéricos permanecen como decisión pendiente.
 
 ### 13.1 Pruebas prioritarias
 
@@ -327,9 +341,16 @@ Compras, mantenimiento, portal de cliente, BI, integraciones y RAG.
 - No se puede cerrar un anclaje sin campos críticos.
 - El cálculo de curado usa la versión correcta y no cambia registros históricos.
 - La misma operación offline no se duplica.
+- El flujo E2E offline-online conserva operaciones pendientes y resuelve rechazos de forma visible.
+- La concurrencia de cuadrillas, los duplicados y los conflictos no sobrescriben registros aprobados.
+- La carga y sincronización de fotografías conserva originales, metadatos y estado de cola.
+- El almacenamiento local lleno produce un fallo controlado sin declarar falsamente que la información fue guardada.
+- Una actualización con operaciones pendientes no pierde ni duplica comandos.
 - Un movimiento de inventario conserva balance y lote.
 - Una corrección aprobada queda auditada.
 - Un PDF coincide con la revisión de datos.
+- El aislamiento multiempresa impide el acceso cruzado a datos y archivos.
+- La restauración recupera datos y archivos dentro de los objetivos definidos.
 
 ## 14. Decisiones pendientes antes de programar
 
@@ -341,6 +362,27 @@ Compras, mantenimiento, portal de cliente, BI, integraciones y RAG.
 - Infraestructura: nube, región, dominio, correo y respaldo.
 - Alcance multiempresa y portal cliente.
 - Dispositivo principal y escenarios reales sin señal.
+- Valores numéricos de RTO y RPO según el análisis de continuidad operacional.
+
+Las siguientes materias permanecen expresamente como decisiones futuras y no forman parte del alcance obligatorio del MVP.
+
+### Evidencia y gobernanza documental
+
+- Preservación formal de expedientes.
+- Matriz de firma por tipo documental para determinar cuándo utilizar firma electrónica.
+- Registro normativo manual y versionado.
+- Hash-chain, almacenamiento WORM o sellado temporal externo según riesgo y necesidad, sin atribuirles por sí solos verdad o admisibilidad jurídica.
+
+### Plataforma e integraciones
+
+- API externa versionada y autorizada por alcance.
+- Infraestructura reproducible o como código.
+- Correlación avanzada de logs o SIEM según crecimiento y riesgo.
+
+### Dispositivos y aplicación de campo
+
+- Política de dispositivos corporativos o BYOD.
+- Prueba de concepto para decidir entre PWA pura y wrapper móvil.
 
 ## 15. Criterios de éxito
 

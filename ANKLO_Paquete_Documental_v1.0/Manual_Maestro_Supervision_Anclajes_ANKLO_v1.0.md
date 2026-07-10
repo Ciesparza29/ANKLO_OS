@@ -366,6 +366,8 @@ El EPP se selecciona por evaluación y SDS, no por una lista universal. Mínimos
 
 Prioridad: detener, proteger, atender, comunicar y preservar escena cuando corresponda. El supervisor no investiga para buscar culpables; recoge hechos, condiciones, barreras fallidas y acciones. Reportar también casi accidentes.
 
+Ante un incidente grave de SST, se preservan los registros, fotografías, documentos y metadatos relacionados conforme al procedimiento de preservación extraordinaria del expediente.
+
 ## 14. Gestión ambiental y residuos
 
 - Segregar cartuchos, boquillas, trapos contaminados, polvo y envases según SDS y procedimiento ambiental.
@@ -528,6 +530,8 @@ El ERP puede calcular, pero no debe convertir una fórmula preliminar en pago le
 | Resultado | Sí | Conforme, en espera, NCR, reparado, rechazado. |
 | Ensayo | Según plan | Equipo, carga, duración, desplazamiento, resultado. |
 
+Las fotografías, ubicaciones y referencias a trabajadores se limitan a lo necesario para la finalidad técnica, contractual, de seguridad o de calidad documentada. Se evitan imágenes de terceros, datos ajenos al trabajo y geolocalización innecesaria; el acceso y la reutilización se restringen según necesidad.
+
 ## 22. Checklists esenciales
 
 ### 22.1 Liberación diaria
@@ -564,6 +568,8 @@ Documento firmado con: obra, vehículo, fecha/hora, responsable, herramienta/act
 
 ## 23. Informes
 
+La aprobación autenticada dentro del sistema identifica al usuario, la acción y su contexto; una firma digitalizada es una representación gráfica incorporada a un documento; y una firma electrónica responde al mecanismo y requisitos aplicables. Estas modalidades no son automáticamente equivalentes entre sí ni producen por sí solas el mismo efecto jurídico; su uso depende del tipo documental, el contrato y el marco aplicable.
+
 ### 23.1 Parte diario
 
 Resumen ejecutivo; personal y HH; actividades/ubicaciones; anclajes conformes/en proceso/NCR; materiales y lotes; herramientas/vehículo; seguridad; restricciones; gastos; fotos; decisiones requeridas; firmas.
@@ -575,6 +581,12 @@ Plan vs real; productividad por tipo; FPY/NCR/retrabajo; consumo real vs teóric
 ### 23.3 Dossier de cierre
 
 Índice, documentos aprobados, submittals, certificados, registros por anclaje/lote, inspecciones, ensayos, NCR cerradas, as-built, fotografías, calibraciones y firmas de aceptación.
+
+El archivo fotográfico original se conserva conforme a la política aplicable. Todo recorte, compresión, anotación, conversión u otra transformación genera un derivado vinculado al original y un registro de la transformación, sin sobrescribir el archivo original.
+
+### 23.4 Preservación extraordinaria del expediente
+
+Ante accidente grave, falla técnica, reclamación, investigación, controversia contractual o requerimiento de autoridad, cliente, aseguradora o asesoría competente, se suspende la eliminación o sobrescritura y se identifica el alcance del expediente afectado. Se conservan los originales y sus metadatos, se restringen los accesos y se registran custodios, copias y transferencias. Las nuevas versiones se conservan sin alterar la evidencia preservada y se siguen las instrucciones de la autoridad o asesoría competente.
 
 # Parte VII - Plan personal de aterrizaje
 

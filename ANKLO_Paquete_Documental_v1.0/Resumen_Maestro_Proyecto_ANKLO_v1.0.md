@@ -39,7 +39,7 @@ Crear un sistema completo que permita a Israel ejecutar y supervisar trabajos de
 4. La seguridad sigue jerarquía de controles; EPP es la última barrera.
 5. Un anclaje sin trazabilidad completa no se considera cerrado.
 6. Los KPIs no pueden incentivar velocidad a costa de calidad o seguridad.
-7. La aplicación debe operar con conectividad limitada y conservar auditoría.
+7. La aplicación debe operar con conectividad limitada y conservar auditoría e evidencia trazable, íntegra, atribuible y preservable.
 8. Los datos personales se protegen desde el diseño y por defecto.
 
 ## 5. Alcance funcional del manual
@@ -76,7 +76,7 @@ ANKLO-OS será una PWA web para Windows, macOS y móviles. Su unidad central de 
 
 ### Fase 0 - Descubrimiento
 
-Mapear procesos actuales, productos, formularios, roles y restricciones legales. No programar hasta definir un flujo piloto.
+Mapear procesos actuales, productos, formularios, roles y restricciones legales. Incluir como asunto pendiente el análisis de aplicabilidad de la Ley Orgánica para el Fortalecimiento de la Ciberseguridad y sus normas secundarias, sin presumir que ANKLO sea infraestructura crítica. Elaborar el inventario de actividades de tratamiento de datos y, cuando corresponda, aplicar y documentar el modelo de tratamiento a gran escala; realizar la evaluación de impacto y determinar la designación de DPD únicamente si se configura el supuesto legal. No programar hasta definir un flujo piloto.
 
 ### Fase 1 - MVP de campo
 
@@ -92,7 +92,7 @@ KPIs, costos, mantenimiento, compras, portal de cliente, aprobaciones y BI.
 
 ### Fase 4 - IA controlada
 
-RAG sobre documentación aprobada, borradores de informes, detección de inconsistencias y pronósticos. La IA no aprueba anclajes ni reemplaza al ingeniero.
+RAG sobre documentación aprobada, borradores de informes, detección de inconsistencias y pronósticos. La IA documental prepara, recupera o contrasta información; se distingue de cualquier decisión automatizada que produzca efectos sobre personas, la cual requiere análisis separado y controles humanos. La IA no aprueba anclajes ni reemplaza al ingeniero.
 
 ## 9. Riesgos principales
 
@@ -100,6 +100,10 @@ RAG sobre documentación aprobada, borradores de informes, detección de inconsi
 - Usar campos libres donde se requiere dato controlado.
 - Metas de productividad que fomenten omisiones.
 - Dependencia de internet en obra.
+- Acceso cruzado entre organizaciones.
+- Almacenamiento local excesivo y conflictos de sincronización.
+- Dependencia de servicios externos.
+- Falta de continuidad operacional.
 - Permisos excesivos o fuga de documentos personales.
 - Cálculo laboral rígido sin actualización legal.
 - IA que invente valores técnicos.
