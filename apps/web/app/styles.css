@@ -1,0 +1,33 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, sans-serif;
+  background: #f4f5f2;
+  color: #18221d;
+}
+body {
+  margin: 0;
+}
+main {
+  max-width: 46rem;
+  margin: 12vh auto;
+  padding: 3rem;
+  background: white;
+  border: 1px solid #d9dfda;
+  border-radius: 1rem;
+}
+.eyebrow {
+  color: #3b6650;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+h1 {
+  font-size: clamp(3rem, 9vw, 6rem);
+  margin: 0.25rem 0;
+}
+aside {
+  margin-top: 2rem;
+  padding: 1rem;
+  border-left: 0.3rem solid #b58a3b;
+  background: #fbf7ed;
+}
