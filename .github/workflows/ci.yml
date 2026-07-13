@@ -19,3 +19,5 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm audit --audit-level high
       - run: pnpm verify
+      - run: docker compose config --quiet
+      - run: git diff --check

@@ -2,23 +2,41 @@
 
 ## Propósito y fuentes
 
-ANKLO-OS es un ERP de campo para instalación de anclajes, todavía sin módulos operativos. Antes de cambiar código, leer las versiones semánticamente más recientes: Bosquejo v1.1 (arquitectura y roadmap), Manual v1.1 (operación y evidencia), Resumen v1.1 (contexto), Glosario v1.1-borrador solo como terminología no aprobada, y README. Normativa, contrato, planos, RFI, evaluaciones y MPII aplicables prevalecen. No mezclar silenciosamente versiones ni convertir decisiones futuras en requisitos; registrar vacíos en `docs/decisions/open-questions.md`.
+ANKLO-OS es un ERP de campo para instalación de anclajes, todavía sin módulos operativos. Antes de cambiar código, leer estas rutas canónicas:
 
-## Límites de dominio y arquitectura
+1. `ANKLO_Paquete_Documental_v1.0/Bosquejo_Arquitectura_ERP_ANKLO_OS_v1.1.md` — arquitectura y roadmap.
+2. `ANKLO_Paquete_Documental_v1.0/Manual_Maestro_Supervision_Anclajes_ANKLO_v1.1.md` — operación y evidencia.
+3. `ANKLO_Paquete_Documental_v1.0/Resumen_Maestro_Proyecto_ANKLO_v1.1.md` — contexto.
+4. `ANKLO_Paquete_Documental_v1.0/README.md` — límites documentales.
+5. `ANKLO_Paquete_Documental_v1.0/Glosario_Maestro_ANKLO_v1.1-borrador.md` — terminología auxiliar no aprobada.
+
+Normativa, contrato, planos, RFI, evaluaciones y MPII aplicables prevalecen. Las versiones antiguas son historial. No combinar versiones ni convertir decisiones futuras en requisitos; registrar vacíos en `docs/decisions/open-questions.md`.
+
+## Arquitectura y dirección de dependencias
 
 - TypeScript estricto, Next.js App Router, PostgreSQL, Prisma, Zod y monolito modular.
-- Dependencias: `apps/web -> contracts -> domain -> db`; `ui` no depende de `db`; `contracts` no depende de Next.js ni Prisma; `domain` no depende de UI; `db` no contiene presentación.
-- Los módulos controlan sus datos y acceden a otros módulos mediante contratos o servicios públicos. Evitar ciclos y accesos directos entre persistencias.
-- Toda entrada no confiable se valida en servidor. Los tipos del cliente no sustituyen validación.
-- No crear migraciones funcionales sin modelo aprobado. Una migración es inmutable después de compartirse y debe incluir plan de reversión o mitigación.
-- Operaciones que afectan varias invariantes usan transacciones con alcance mínimo; no mantener transacciones abiertas durante llamadas externas.
+- `contracts` contiene esquemas y tipos compartidos; no depende de paquetes internos, Next.js ni Prisma.
+- `domain` contiene reglas y puertos; solo puede depender de `contracts`. No depende de Prisma, Next.js, `db` ni `ui`.
+- `db` es un adaptador de persistencia; puede depender de `domain` y `contracts`. Nunca depende de `web` ni `ui`.
+- `ui` comparte componentes de presentación; puede depender de `contracts`, nunca de `db` o Prisma.
+- `apps/web` es la raíz de composición: puede conectar `domain`, `db`, `contracts` y `ui`. La composición ocurre aquí, nunca dentro de `domain`.
+- `config` es fundacional y no depende de paquetes de producto.
+- Dirección permitida: `web -> {ui, db, domain, contracts}`, `db -> {domain, contracts}`, `domain -> contracts`, `ui -> contracts`. Nunca `domain -> db`, `db -> web` ni ciclos.
+- Los módulos acceden a otros mediante contratos, puertos, eventos o servicios públicos; nunca mediante tablas o internals ajenos.
+
+## Ingeniería
+
+- Toda entrada no confiable se valida en servidor; los tipos del cliente no sustituyen validación.
+- No crear migraciones funcionales sin modelo aprobado. Una migración compartida es inmutable y requiere mitigación o reversión documentada.
+- Operaciones sobre varias invariantes usan transacciones breves; no mantenerlas durante llamadas externas.
+- Ejecutar `pnpm arch:check`; no eludir restricciones de importación o ciclos.
 
 ## Invariantes
 
 - Toda tabla de negocio tendrá `organization_id`; servicio y, cuando sea viable, RLS verifican aislamiento. Nunca mezclar organizaciones.
 - Registros aprobados no se modifican silenciosamente. `AuditEvent` es append-only para interfaces ordinarias; una corrección crea evento o revisión.
 - Operaciones críticas futuras serán idempotentes mediante identificadores de cliente.
-- Archivos binarios viven fuera de la base relacional, aislados por organización; metadatos y relaciones se conservan en datos estructurados.
+- Archivos binarios viven fuera de la base relacional, aislados por organización; metadatos y relaciones permanecen estructurados.
 - Conservar originales; toda transformación crea un derivado relacionado. Retención y preservación extraordinaria gobiernan eliminación.
 - Un hash acredita coincidencia o integridad, no autoría, fecha, ubicación, verdad ni validez jurídica.
 - Aprobación autenticada, firma digitalizada y firma electrónica son conceptos distintos.
@@ -31,13 +49,10 @@ ANKLO-OS es un ERP de campo para instalación de anclajes, todavía sin módulos
 - Prohibidas decisiones exclusivamente automatizadas sobre seguridad, conformidad estructural, disciplina, aptitud laboral, pagos o derechos de trabajadores.
 - No inventar torques, tiempos, cargas, profundidades, ciclos de limpieza, reglas jurídicas, aprobaciones ni permisos.
 
-## Calidad y terminado
+## Calidad, terminado y reporte
 
-- Pruebas para contratos, reglas e invariantes; cada corrección incluye una prueba cuando sea razonable.
+- Probar contratos, reglas e invariantes; cada corrección incluye prueba cuando sea razonable.
 - Ejecutar `pnpm verify`, `docker compose config`, `git diff --check` y `git status --short`.
-- Terminado significa instalación reproducible, lockfile actualizado, formato/lint/tipos/pruebas/Prisma/build correctos, documentación coherente y diff limitado.
+- Terminado exige instalación reproducible, lockfile actualizado, formato/lint/arquitectura/tipos/pruebas/Prisma/build correctos y diff limitado.
 - No commit, push o despliegue sin autorización expresa.
-
-## Reporte final
-
-Informar: archivos; decisiones; verificación real; alcance excluido; riesgos o limitaciones; preguntas bloqueantes; una siguiente tarea concreta.
+- Reportar: archivos, problemas, correcciones, decisiones, verificación real, alcance excluido, riesgos y preguntas pendientes.

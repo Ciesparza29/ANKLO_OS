@@ -10,11 +10,13 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
+    "arch:check": "node scripts/check-architecture.mjs",
+    "deps:check": "pnpm peers check",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "db:validate": "pnpm --filter @anklo/db db:validate",
     "build": "pnpm --filter @anklo/web build",
-    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm db:validate && pnpm build"
+    "verify": "pnpm format:check && pnpm lint && pnpm arch:check && pnpm deps:check && pnpm typecheck && pnpm test && pnpm db:validate && pnpm build"
   },
   "devDependencies": {
     "@eslint/js": "9.39.4",
