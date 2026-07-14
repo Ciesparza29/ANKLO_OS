@@ -12,6 +12,15 @@ ANKLO-OS es un ERP de campo para instalación de anclajes, todavía sin módulos
 
 Normativa, contrato, planos, RFI, evaluaciones y MPII aplicables prevalecen. Las versiones antiguas son historial. No combinar versiones ni convertir decisiones futuras en requisitos; registrar vacíos en `docs/decisions/open-questions.md`.
 
+## Edición documental y trazabilidad
+
+- Limitar cada intervención al alcance autorizado y conservar, salvo razón aprobada, títulos, numeración, enlaces, front matter y estructura.
+- Distinguir norma aplicable, contrato o especificación, instrucción de fabricante, práctica interna, supuesto y decisión pendiente; no elevar una categoría por inferencia.
+- No convertir fuentes crudas, transcripciones o salidas de IA en requisitos aprobados sin procedencia, trazabilidad, validación y revisión humana.
+- Usar redacción condicionada cuando no esté confirmada la aplicabilidad técnica, jurídica, laboral, contable, de SST o de privacidad.
+- Evitar cambios masivos de codificación o finales de línea y detenerse ante contradicciones materiales o impactos especializados no autorizados.
+- Expresar requisitos como capacidades antes que marcas, salvo que una decisión documentada exija una tecnología específica.
+
 ## Arquitectura y dirección de dependencias
 
 - TypeScript estricto, Next.js App Router, PostgreSQL, Prisma, Zod y monolito modular.
