@@ -24,27 +24,33 @@ La transcripción de reunión declara haber sido generada automáticamente y ser
 
 ## 3. Fuentes revisadas
 
-| Código | Fuente                                    | Naturaleza y alcance usado                         | Autoridad en esta auditoría                                                       |
-| ------ | ----------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------- |
-| F-01   | `README.md` raíz                          | Estado técnico del repositorio y comandos          | Gobierno técnico vigente                                                          |
-| F-02   | `AGENTS.md` raíz                          | Invariantes, fuentes y límites de trabajo          | Gobierno técnico vigente                                                          |
-| F-03   | `ANKLO_Paquete_Documental_v1.0/README.md` | Estado, vigencia y límites documentales            | Control documental del paquete                                                    |
-| F-04   | Manual Maestro v1.1                       | Manual corporativo en borrador sujeto a aprobación | Orientación técnica fuerte; no sustituye fuentes superiores                       |
-| F-05   | Bosquejo de Arquitectura v1.1             | Anteproyecto funcional y técnico                   | Propuesta futura/provisional                                                      |
-| F-06   | Resumen Maestro v1.1                      | Contexto coordinado del proyecto                   | Contextual, no decisorio por sí solo                                              |
-| F-07   | Glosario v1.1-borrador                    | Terminología con fuentes pendientes                | Auxiliar no aprobado                                                              |
-| F-08   | Notas reunión 11-jul-2026                 | Requisitos y prácticas expresados por stakeholders | Requisito solicitado/práctica observada; requiere confirmación                    |
-| F-09   | Planilla SEMAICA 3003-001                 | Cierre comercial de una obra concreta              | Evidencia contractual/operativa del caso; alcance por confirmar                   |
-| F-10   | Acuerdo de Gestión Comercial, 01-feb-2026 | Acuerdo específico Christian–Juber                 | Política contractual específica; validez y vigencia requieren revisión competente |
-| F-11   | Informe técnico 260130                    | Cierre de obra EDIACERO/Corporación Favorita       | Evidencia operativa/comercial del caso                                            |
-| F-12   | Reglamento Interno y Protocolo Operativo  | Política interna y protocolo propuesto             | Sujeto a revisión técnica, SST, laboral y corporativa                             |
-| F-13   | `docs/architecture/module-boundaries.md`  | Límites modulares futuros                          | Decisión técnica provisional                                                      |
-| F-14   | `docs/decisions/open-questions.md`        | Incertidumbres declaradas                          | Registro vigente de pendientes                                                    |
-| F-15   | `docs/backlog/sprint-0.md`                | Alcance realizado de fundación                     | Registro de ejecución técnica                                                     |
-| F-16   | ADR 0001                                  | Arquitectura base                                  | Aceptada provisionalmente                                                         |
-| F-17   | ADR 0002                                  | Puertos y adaptadores                              | Aceptada provisionalmente                                                         |
+| Código | Fuente                                    | Naturaleza y alcance usado                                 | Autoridad en esta auditoría                                                       |
+| ------ | ----------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| F-01   | `README.md` raíz                          | Estado técnico del repositorio y comandos                  | Gobierno técnico vigente                                                          |
+| F-02   | `AGENTS.md` raíz                          | Invariantes, fuentes y límites de trabajo                  | Gobierno técnico vigente                                                          |
+| F-03   | `ANKLO_Paquete_Documental_v1.0/README.md` | Estado, vigencia y límites documentales                    | Control documental del paquete                                                    |
+| F-04   | Manual Maestro v1.1                       | Manual corporativo en borrador sujeto a aprobación         | Orientación técnica fuerte; no sustituye fuentes superiores                       |
+| F-05   | Bosquejo de Arquitectura v1.1             | Anteproyecto funcional y técnico                           | Propuesta futura/provisional                                                      |
+| F-06   | Resumen Maestro v1.1                      | Contexto coordinado del proyecto                           | Contextual, no decisorio por sí solo                                              |
+| F-07   | Glosario v1.1-borrador                    | Terminología con fuentes pendientes                        | Auxiliar no aprobado                                                              |
+| F-08   | Notas reunión 11-jul-2026                 | Fuente cruda de discovery; exportación automática editable | Confidencial y no canónica; no constituye aprobación ni requisito por sí sola     |
+| F-09   | Planilla SEMAICA 3003-001                 | Cierre comercial de una obra concreta                      | Evidencia contractual/operativa del caso; alcance por confirmar                   |
+| F-10   | Acuerdo de Gestión Comercial, 01-feb-2026 | Acuerdo específico Christian–Juber                         | Política contractual específica; validez y vigencia requieren revisión competente |
+| F-11   | Informe técnico 260130                    | Cierre de obra EDIACERO/Corporación Favorita               | Evidencia operativa/comercial del caso                                            |
+| F-12   | Reglamento Interno y Protocolo Operativo  | Política interna y protocolo propuesto                     | Sujeto a revisión técnica, SST, laboral y corporativa                             |
+| F-13   | `docs/architecture/module-boundaries.md`  | Límites modulares futuros                                  | Decisión técnica provisional                                                      |
+| F-14   | `docs/decisions/open-questions.md`        | Incertidumbres declaradas                                  | Registro vigente de pendientes                                                    |
+| F-15   | `docs/backlog/sprint-0.md`                | Alcance realizado de fundación                             | Registro de ejecución técnica                                                     |
+| F-16   | ADR 0001                                  | Arquitectura base                                          | Aceptada provisionalmente                                                         |
+| F-17   | ADR 0002                                  | Puertos y adaptadores                                      | Aceptada provisionalmente                                                         |
 
 También se revisaron los recursos citados localmente por las fuentes: los SVG de arquitectura/flujo y las referencias cruzadas entre ADR, Manual, Bosquejo, Resumen y Glosario. No se accedió a los enlaces externos de Google Drive ni se verificaron textos completos de normas, contratos, planos, RFI, evaluaciones o MPII no incorporados al expediente.
+
+### 3.1 Procedencia y tratamiento de F-08
+
+El archivo original `ANKLO_Paquete_Documental_v1.0/NOTAS_REUINION_ADMIN_ANKLO.md` corresponde a una exportación de Google Docs con resumen y transcripción automática editable de Google Meet/Gemini; declara una reunión del 11 de julio de 2026. Su SHA-256 es `65735F4A5FFB236573DA9B07B3A9197CE63DF53632E37DB0A45B1C1EC015DC27`. Las atribuciones de hablantes no son verificables y el contenido presenta al menos una inconsistencia interna de identificación.
+
+La fuente contiene datos personales, laborales, financieros y comerciales; se clasifica como confidencial, no canónica y no apta para versionado ordinario. Los requisitos útiles fueron extraídos y depurados en esta auditoría, las matrices y contradicciones de discovery, el PRD y los ADR. El original se preservó fuera de Git, bajo acceso restringido, en el archivo lógico privado de fuentes crudas de ANKLO-OS. Su retención definitiva permanece pendiente. Esta fuente no debe usarse como aprobación ni requisito por sí sola.
 
 ## 4. Jerarquía de autoridad
 
