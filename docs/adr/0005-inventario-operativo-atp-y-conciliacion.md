@@ -18,6 +18,8 @@ Migo mantendrá durante 2026 el stock contable oficial de Distripernos. ANKLO-OS
 
 Este ADR se limita al inventario propio y operativo vinculado a Distripernos/ANKLO-OS. El inventario de Servipernos, otras fuentes externas y las obligaciones de préstamo pertenecen al ADR 0008.
 
+La manufactura y el corte pueden requerir simultáneamente una unidad comercial agregada y una pieza física identificable. Conforme al ADR 0009, propiedad y custodia también son dimensiones diferentes: una pieza puede seguir siendo propiedad de una entidad mientras otra organización o área mantiene custodia operacional temporal.
+
 ## Problema
 
 Si se trata un snapshot Migo, una proyección y un conteo como el mismo saldo, la aplicación podría:
@@ -48,6 +50,9 @@ Si se trata un snapshot Migo, una proyección y un conteo como el mismo saldo, l
 - Antigüedad del snapshot y degradación explícita.
 - Concurrencia, balance, lote/pieza y auditoría.
 - Puntos de integración con ADR 0008.
+- Unidad comercial y pieza física identificable, incluida estrategia híbrida individual/lote.
+- Propiedad, custodia e inventario propio o bajo custodia.
+- Movimientos de productos fabricados, remanentes, merma y residuos provenientes de ADR 0009.
 
 ## Fuera de alcance
 
@@ -84,6 +89,10 @@ Si se trata un snapshot Migo, una proyección y un conteo como el mismo saldo, l
 - **Conteo:** observación física registrada para un alcance y momento determinados; no ajusta por sí mismo ninguna otra perspectiva.
 - **Ajuste:** movimiento explícito y autorizado que explica una diferencia; no es edición directa de saldo ni sustitución del conteo.
 - **Conciliación:** proceso que compara perspectivas o registros relacionados, documenta coincidencias y diferencias y conserva su resolución o estado pendiente.
+- **Unidad comercial:** cantidad usada para catálogo, compra, venta o reporte; no sustituye la identidad física cuando la trazabilidad exige pieza.
+- **Pieza física:** barra, segmento, producto fabricado o remanente identificado individualmente o dentro de un lote homogéneo gobernado, con genealogía preservada.
+- **Propiedad:** atribución de la entidad propietaria según contexto y vigencia; no se deduce de ubicación o custodia.
+- **Custodia:** control operacional o físico temporal; no transfiere por sí solo propiedad ni autoridad contable.
 
 El PRD podrá desarrollar estados, casos y lenguaje de interfaz, pero no redefine estas separaciones ni es requisito para aceptar el patrón arquitectónico.
 
@@ -96,6 +105,10 @@ El stock operativo proyectado se deriva del snapshot válido seleccionado y de e
 ### Movimientos y balance
 
 Todo cambio de inventario operativo procede de un movimiento autorizado. El saldo no tendrá una interfaz ordinaria de edición directa. Los movimientos conservan entidad, contexto, producto, ubicación, cantidad, unidad, tipo, referencia, actor y tiempo; lote o pieza se añaden cuando la trazabilidad del producto lo requiera.
+
+Una cantidad agregada no autoriza consumir cualquier pieza compatible ni elimina la trazabilidad. Cuando aplique la identificación híbrida de ADR 0009, barras asignadas, remanentes, piezas especiales, material de terceros u otra empresa y otros casos gobernados conservan identidad individual; los productos homogéneos pueden agruparse por lote sin perder genealogía. Propietario, custodio y ubicación se conservan separadamente y con vigencia.
+
+Una ejecución de manufactura confirmada puede consumir `CutExecutionInput` y dar de alta `ManufacturedProduct`, `ReusableRemnant`, `NormalLoss`, `ExtraordinaryLoss` o `RecoverableWaste` mediante movimientos balanceados. Un plan o su aprobación no produce esos movimientos. La merma no se representa como remanente ni se oculta en un ajuste genérico.
 
 Una corrección crea un movimiento de reverso enlazado y un nuevo movimiento correcto. El movimiento original permanece. La regla de balance y los movimientos compuestos se precisarán en el modelo lógico sin inventar tipos no aprobados.
 
@@ -113,6 +126,8 @@ ATP = stock del último snapshot válido de Migo
 ```
 
 La fórmula define componentes mínimos, no una cifra contable. Cualquier extensión —por ejemplo, transferencias, vencimientos, inspecciones, unidades o estados adicionales— requiere una decisión registrada y pruebas; no se infiere para completar el modelo.
+
+ATP se calcula dentro del propietario y contexto autorizados. Material de otra empresa, material externo o material meramente bajo custodia no se suma automáticamente al ATP propio. Un futuro material propiedad de ANKLO pero custodiado por Distripernos permanece en la perspectiva de su propietario, sujeto a políticas y movimientos aprobados; la custodia física no lo convierte en stock propio de Distripernos.
 
 El resultado ATP conserva el snapshot utilizado, fecha, componentes, política de vigencia y contexto. Si no existe snapshot válido o supera su vigencia, la política configurada debe bloquear, degradar u ofrecer una advertencia aprobada; nunca presentar el resultado como actual sin indicación.
 
@@ -163,6 +178,12 @@ Cada lote es inmutable, auditado e idempotente. Reimportar el mismo lote lógico
 - Ajustes sensibles respetan segregación y auditoría.
 - Ningún nombre de cargo concede por sí solo capacidad para validar, ajustar o cerrar una conciliación.
 - Stock externo no confirmado no se agrega al stock propio.
+- Una unidad comercial no elimina la identidad de una pieza cuando la política exige trazabilidad individual.
+- Propiedad, custodia y ubicación no se infieren ni se sobrescriben unas a otras.
+- Inventario bajo custodia de otra empresa no se suma automáticamente al ATP del custodio.
+- Un plan o aprobación de manufactura no crea ni consume inventario.
+- Solo una ejecución confirmada produce movimientos de productos fabricados, remanentes, merma o residuos.
+- La merma normal, la extraordinaria, el remanente y el residuo recuperable conservan clasificaciones distintas.
 
 ## Límites de responsabilidad
 
@@ -171,6 +192,7 @@ Cada lote es inmutable, auditado e idempotente. Reimportar el mismo lote lógico
 - ADR 0006 solicita y libera reservas comerciales mediante contratos públicos; no edita saldos.
 - ADR 0007 produce movimientos y piezas al ejecutar cortes; un plan no cambia inventario.
 - ADR 0008 expone disponibilidad/entregas externas sin fusionarlas con stock propio.
+- ADR 0009 define propiedad, custodia, ejecución de manufactura y clases de salida; este dominio registra sus movimientos sin conocer internals de manufactura.
 - Contabilidad determina efectos oficiales en Migo; ANKLO-OS conserva tareas y referencias.
 
 ## Alternativas consideradas
@@ -270,6 +292,7 @@ Ninguna configuración permite editar saldos, duplicar importaciones o presentar
 - [ADR 0006](0006-cotizaciones-precios-abastecimiento-y-reservas.md) consume ATP y crea reservas/solicitudes.
 - [ADR 0007](0007-piezas-remanentes-y-optimizacion-de-cortes.md) consume barras/remanentes y produce movimientos reales.
 - [ADR 0008](0008-inventario-externo-servipernos-y-prestamos.md) ofrece fuentes externas separadas; una entrega clasificada puede originar movimientos o tareas controladas.
+- [ADR 0009](0009-manufactura-corte-subcontratado-propiedad-y-custodia.md) aporta ejecuciones confirmadas, propietario/custodio y productos, remanentes, mermas o residuos que se reflejan mediante movimientos públicos.
 - Campo consume inventario mediante un servicio público; no modifica movimientos directamente.
 - Reportes deben exponer perspectiva, fecha y estado de consistencia.
 
@@ -308,12 +331,13 @@ No se crea migración ni saldo inicial por este ADR.
 
 ## Fuentes internas consultadas
 
-- [Registro de decisiones de producto v2.0](../product/decisions/Registro_Decisiones_Producto_v2.0.md), `PROD-007`, `PROD-010`, `PROD-011`, `PROD-012`, `PROD-013` y `PROD-019`.
+- [Registro de decisiones de producto v2.0](../product/decisions/Registro_Decisiones_Producto_v2.0.md), `PROD-007`, `PROD-010`, `PROD-011`, `PROD-012`, `PROD-013`, `PROD-019` y `PROD-028`–`PROD-041`.
 - [Mapa de fuentes de verdad](../architecture/mapa-fuentes-de-verdad-v1.0.md).
 - [Preguntas y supuestos pendientes v2.0](../product/decisions/Preguntas_Supuestos_Pendientes_v2.0.md), `ADR-Q-004`, `LOG-Q-005`, `LOG-Q-006`, `LOG-Q-013`, `LOG-Q-014`, `LOG-Q-020`, `IMP-Q-002`, `IMP-Q-008`, `IMP-Q-010` e `IMP-Q-011`.
 - [ADR 0001](0001-arquitectura-base.md).
 - [ADR 0002](0002-puertos-y-adaptadores.md).
 - [Bosquejo v1.1](../../ANKLO_Paquete_Documental_v1.0/Bosquejo_Arquitectura_ERP_ANKLO_OS_v1.1.md), inventario basado en movimientos.
+- [ADR 0009](0009-manufactura-corte-subcontratado-propiedad-y-custodia.md).
 
 ## Relaciones con otros ADR
 

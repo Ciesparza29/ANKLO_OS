@@ -436,6 +436,231 @@ Fuentes relacionadas:
 - **Requisitos derivados:** revisión humana, fuentes versionadas, abstención y auditoría de la decisión.
 - **Criterio de revisión futura:** no se elimina; solo se precisa por tipo de decisión y autoridad aplicable.
 
+### PROD-028 — Corte como transformación física y modalidad de ejecución
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** manufactura y corte de barras, segmentos y piezas.
+- **Decisión:** el corte es un proceso operativo de transformación física que consume materia prima y produce piezas o productos terminados, remanentes reutilizables y merma o residuos. Cada orden o ejecución declara modalidad `INTERNAL` o `EXTERNAL`; la modalidad queda auditada y no cambia retroactivamente después del cierre.
+- **Justificación:** separar la naturaleza del proceso de la organización que lo ejecuta.
+- **Consecuencias:** una unidad autorizada puede ejecutar internamente y un proveedor o subcontratista puede ejecutar externamente bajo el mismo modelo de trazabilidad.
+- **Excepciones:** una corrección cerrada requiere revisión, reverso o evento compensatorio.
+- **Responsable o aprobador:** aprobación funcional de Israel; no constituye validación jurídica, contractual, contable ni tributaria.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026.
+- **Documentos afectados:** ADR 0005–0007, ADR 0009, mapa de fuentes de verdad y PRD futuro.
+- **Requisitos derivados:** modalidad explícita, contexto, genealogía, balance y auditoría.
+- **Criterio de revisión futura:** revisar al incorporar procesos internos adicionales o nuevos proveedores.
+
+### PROD-029 — Separación entre proceso, servicio y producto fabricado
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** catálogo, manufactura, inventario y comercio.
+- **Decisión:** el proceso de corte, el servicio comercial de corte y el producto físico fabricado son conceptos relacionados pero distintos. El servicio comprado o vendido no mantiene inventario físico; el producto fabricado puede mantener inventario, costo y genealogía.
+- **Justificación:** impedir que una identidad alterne libremente entre bien, servicio y transformación.
+- **Consecuencias:** una ejecución puede consumir barras, generar productos, remanentes y merma y relacionarse con un servicio comprado sin fusionarlos.
+- **Excepciones:** un producto comercial permanente requiere gobierno de catálogo.
+- **Responsable o aprobador:** aprobación funcional de Israel; no constituye clasificación contable o tributaria.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026.
+- **Documentos afectados:** ADR 0006, ADR 0007, ADR 0009 y mapa de fuentes de verdad.
+- **Requisitos derivados:** relaciones explícitas entre ejecución, `CutService` y `ManufacturedProduct`.
+- **Criterio de revisión futura:** revisar con catálogo y tratamiento oficial en Migo.
+
+### PROD-030 — PROMED como proveedor externo de corte
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** operación actual de corte subcontratado.
+- **Decisión:** PROMED es una empresa externa a Distripernos que vende y ejecuta el servicio de corte. No compra las barras, no adquiere propiedad, no gobierna el inventario y devuelve o entrega productos terminados, remanentes e información de merma.
+- **Justificación:** representar al ejecutor sin atribuirle propiedad o autoridad de inventario.
+- **Consecuencias:** entrega a ejecución, material, cantidades, resultados y recepción se registran aunque las partes compartan espacios físicos o contiguos.
+- **Excepciones:** la transición puede ser un cambio de estado o custodia operacional; no se inventa transporte físico.
+- **Responsable o aprobador:** aprobación funcional de Israel; los efectos comerciales, contractuales, contables y tributarios requieren evidencia y autoridades competentes.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026.
+- **Documentos afectados:** ADR 0006, ADR 0009 y mapa de fuentes de verdad.
+- **Requisitos derivados:** proveedor, custodia temporal, recepción y futura referencia documental.
+- **Criterio de revisión futura:** revisar al obtener el documento comercial y acuerdo vigentes.
+
+### PROD-031 — Propiedad y custodia actuales
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** barras, productos terminados y remanentes actuales.
+- **Decisión:** Distripernos conserva su propiedad y administra el inventario físico. PROMED recibe material solo para ejecución temporal y no se convierte en propietario ni responsable del inventario contable.
+- **Justificación:** separar propiedad, custodia operacional y ejecución.
+- **Consecuencias:** propietario, custodio, solicitante, planificador, aprobador, ejecutor y receptor se registran independientemente.
+- **Excepciones:** custodia temporal no transfiere propiedad.
+- **Responsable o aprobador:** aprobación funcional de Israel; no constituye dictamen jurídico o validación contable.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026.
+- **Documentos afectados:** ADR 0005, ADR 0009 y mapa de fuentes de verdad.
+- **Requisitos derivados:** `OwnershipContext`, `CustodyEvent` y preservación histórica.
+- **Criterio de revisión futura:** revisar con acuerdos y documentos reales.
+
+### PROD-032 — ANKLO actual como brazo operativo
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** situación organizacional actual.
+- **Decisión:** ANKLO ejecuta actualmente servicios de instalación vendidos o administrados por Distripernos, utiliza materiales administrados por Distripernos y no sustituye su responsabilidad física de inventario.
+- **Justificación:** evitar presentar a ANKLO actual como empresa contable independiente sin respaldo.
+- **Consecuencias:** las operaciones conservan entidad legal y unidad operativa aplicables conforme a ADR 0003.
+- **Excepciones:** una denominación operativa no crea personalidad jurídica, propiedad o autoridad contable.
+- **Responsable o aprobador:** aprobación funcional de Israel; pendiente de evidencia societaria/fiscal aplicable.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026 y `PROD-003`.
+- **Documentos afectados:** ADR 0009 y mapa de fuentes de verdad.
+- **Requisitos derivados:** contexto explícito y no reatribución histórica.
+- **Criterio de revisión futura:** revisar al existir evidencia de entidad independiente.
+
+### PROD-033 — Escenario futuro de ANKLO independiente
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** capacidad futura, no operación actual.
+- **Decisión:** el modelo permitirá que una futura ANKLO independiente compre barras, sea propietaria y solicitante, mantenga custodia física/logística en Distripernos, solicite corte a PROMED y reciba productos terminados propios.
+- **Justificación:** separar propiedad económica, custodia física, solicitante, ejecutor y proveedor sin implementar contabilidad multiempresa.
+- **Consecuencias:** la entidad futura tendrá identidad y vigencia nuevas y no reatribuirá historia.
+- **Excepciones:** no afirma que ANKLO independiente exista hoy ni define contratos, precios, impuestos o contabilidad.
+- **Responsable o aprobador:** aprobación funcional de Israel; la materialización requiere evidencia y validaciones competentes.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026 y `PROD-003`.
+- **Documentos afectados:** ADR 0005, ADR 0009 y mapa de fuentes de verdad.
+- **Requisitos derivados:** propiedad y custodia independientes y vigencias por entidad.
+- **Criterio de revisión futura:** revisar al existir documentos constitutivos y acuerdos intercompañía.
+
+### PROD-034 — Responsabilidades separadas de corte
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** solicitudes, planes y ejecuciones.
+- **Decisión:** solicitante, planificador, aprobador y ejecutor son responsabilidades separadas. Actualmente Distripernos solicita, planifica y aprueba mediante roles autorizados y PROMED ejecuta; ejecutar no concede diseño o aprobación del patrón.
+- **Justificación:** preservar autoridad y segregación.
+- **Consecuencias:** las asignaciones se resuelven por rol, contexto y vigencia; una futura ANKLO podrá ser solicitante y propietaria.
+- **Excepciones:** responsabilidades coincidentes requieren matriz vigente y auditoría.
+- **Responsable o aprobador:** aprobación funcional de Israel; usuarios concretos pendientes.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026.
+- **Documentos afectados:** ADR 0007, ADR 0009 y registro de pendientes.
+- **Requisitos derivados:** capacidades separadas y auditoría por etapa.
+- **Criterio de revisión futura:** revisar con la matriz real de roles.
+
+### PROD-035 — Identificación física híbrida
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** barras, piezas, productos y remanentes.
+- **Decisión:** identificar individualmente barras asignadas, remanentes, piezas especiales o de alto valor, material de terceros u otra empresa y casos exigidos; permitir lotes para productos homogéneos con especificación, longitud, material, norma, acabado, orden, propietario y ejecución equivalentes.
+- **Justificación:** equilibrar trazabilidad y operación repetitiva.
+- **Consecuencias:** el lote no elimina genealogía de barras o segmentos de origen.
+- **Excepciones:** la política puede variar por familia y vigencia sin cambiar historia.
+- **Responsable o aprobador:** aprobación funcional de Israel.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026.
+- **Documentos afectados:** ADR 0005, ADR 0007 y ADR 0009.
+- **Requisitos derivados:** política versionada, identidad individual o lote y genealogía.
+- **Criterio de revisión futura:** revisar con catálogo, valor y riesgos reales.
+
+### PROD-036 — Umbral temporal de remanente
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** candidato inicial a remanente reutilizable.
+- **Decisión:** un segmento de al menos 2 pulgadas puede ser candidato a remanente reutilizable. Es una política temporal, configurable, versionada, asociada a organización o política, con unidad y vigencia; no declara reutilización automática.
+- **Justificación:** disponer de criterio inicial sin crear constante universal.
+- **Consecuencias:** compatibilidad, estado, daño, contaminación y pedido determinan la clasificación; excepciones requieren aprobación y auditoría.
+- **Excepciones:** otra política puede aplicar prospectivamente sin alterar historia.
+- **Responsable o aprobador:** aprobación funcional de Israel; no constituye parámetro técnico universal.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026.
+- **Documentos afectados:** ADR 0007, ADR 0009 y registro de configuraciones.
+- **Requisitos derivados:** unidad, versión, vigencia, excepción y evaluación final.
+- **Criterio de revisión futura:** revisar con casos reales y familia de producto.
+
+### PROD-037 — Clases de salida del corte
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** resultados y balance físico.
+- **Decisión:** distinguir `ManufacturedProduct`, `ReusableRemnant`, `NormalLoss`, `ExtraordinaryLoss` y `RecoverableWaste`. Un remanente no es merma y la merma no se oculta en ajustes genéricos.
+- **Justificación:** explicar destino del material y diferencias plan–real.
+- **Consecuencias:** la merma normal corresponde a pérdidas inherentes configuradas; la extraordinaria a error, corte incorrecto, daño, rechazo, pérdida, diferencia no explicada, retrabajo o incidente.
+- **Excepciones:** causa y clasificación conservan evidencia; límites técnicos siguen pendientes.
+- **Responsable o aprobador:** aprobación funcional de Israel; no constituye clasificación ambiental, contable o tributaria definitiva.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026.
+- **Documentos afectados:** ADR 0005, ADR 0007, ADR 0009 y mapa de fuentes.
+- **Requisitos derivados:** categorías, causa, balance y movimientos explícitos.
+- **Criterio de revisión futura:** revisar con tolerancias y tratamiento de residuos aprobados.
+
+### PROD-038 — Aprobación de merma extraordinaria
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** registro, verificación y aprobación.
+- **Decisión:** supervisor operativo registra y justifica; inventario verifica; un aprobador operativo podrá aprobar dentro de un límite configurado y dirección por encima o en casos críticos. Sin límite ratificado, toda merma extraordinaria requiere dirección.
+- **Justificación:** mantener segregación sin inventar montos o porcentajes.
+- **Consecuencias:** capacidades por rol, contexto y vigencia, nunca por nombre personal.
+- **Excepciones:** toda excepción requiere motivo, autoridad y auditoría.
+- **Responsable o aprobador:** aprobación funcional de Israel; límites y usuarios concretos pendientes.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026.
+- **Documentos afectados:** ADR 0005, ADR 0009 y registro de pendientes.
+- **Requisitos derivados:** flujo segregado, límite versionado y escalamiento.
+- **Criterio de revisión futura:** revisar con matriz y límites aprobados.
+
+### PROD-039 — Costos operativos básicos
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** primer alcance de manufactura.
+- **Decisión:** `CostEstimate` incluye solo valor estimado del material y precio estimado/cotizado del servicio; `ActualCost` incluye solo valor del material consumido y valor real cobrado por el servicio.
+- **Justificación:** comparar plan y ejecución sin anticipar costeo completo.
+- **Consecuencias:** costos indirectos, depreciación, energía, transporte, mano de obra indirecta, distribución contable, impuestos y costeo estatutario quedan fuera.
+- **Excepciones:** Migo conserva registros contables y tributarios oficiales en 2026; ANKLO-OS mantiene costos operativos conciliables.
+- **Responsable o aprobador:** aprobación funcional de Israel; cualquier efecto oficial requiere validación contable.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026.
+- **Documentos afectados:** ADR 0006, ADR 0009 y mapa de fuentes.
+- **Requisitos derivados:** fuente, revisión, estimado, real y tarea futura de conciliación.
+- **Criterio de revisión futura:** revisar antes de añadir costos indirectos.
+
+### PROD-040 — Primer incremento manual determinista
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** primer desarrollo futuro.
+- **Decisión:** comenzar con planificación y ejecución manual controlada: patrón manual, kerf de configuración aprobada, cálculo determinista previsto, registro real, comparación, costos básicos, auditoría y conciliación Migo pendiente.
+- **Justificación:** validar proceso e invariantes antes de optimización o integración.
+- **Consecuencias:** solicitud, material, entrega, modalidad, recepción, productos, remanentes y mermas quedan conceptualmente cubiertos.
+- **Excepciones:** no incluye optimizador, IA de patrones, transmisión Migo, contabilidad, facturación, conciliación automática, costos indirectos ni decisiones automáticas de conformidad.
+- **Responsable o aprobador:** aprobación funcional de Israel; implementación no autorizada en esta fase.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026.
+- **Documentos afectados:** ADR 0007, ADR 0009 y PRD/backlog futuros.
+- **Requisitos derivados:** estados revisables, entradas aprobadas y pruebas de balance.
+- **Criterio de revisión futura:** revisar tras casos reales y antes del optimizador.
+
+### PROD-041 — Configuración sin ruptura de invariantes
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** políticas de manufactura, inventario, costos y autoridad.
+- **Decisión:** modalidad, proveedor, solicitante, propietario, custodio, roles, identificación, remanente mínimo, reglas, costos, límites, vigencias y tarifa/cotización son políticas versionables; no pueden romper integridad.
+- **Justificación:** permitir variación sin hacer opcionales la historia o el balance.
+- **Consecuencias:** no son configurables libremente doble consumo, stock creado por plan, genealogía, historia de propiedad/custodia, cierre, correcciones, cotización aceptada, autoridad Migo o suma de inventario ajeno al ATP.
+- **Excepciones:** una nueva política actúa desde su vigencia y no reescribe historia.
+- **Responsable o aprobador:** aprobación funcional de Israel.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026.
+- **Documentos afectados:** ADR 0005–0007, ADR 0009 y configuraciones.
+- **Requisitos derivados:** versión, vigencia, organización, autoridad, auditoría y pruebas negativas.
+- **Criterio de revisión futura:** revisar cuando se proponga configurar una invariante.
+
+### PROD-042 — Estados conceptuales de manufactura y corte
+
+- **Estado:** APROBADA
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** propuesta documental para solicitud, plan y ejecución.
+- **Decisión:** adoptar como propuesta revisable los estados mínimos de ADR 0009, separando aprobación, ejecución, recepción, conciliación, bloqueo y cancelación.
+- **Justificación:** impedir que aprobar cree stock o que una ejecución cierre antes de recepción/conciliación.
+- **Consecuencias:** nombres y transiciones requieren casos reales antes de implementación.
+- **Excepciones:** valida separación conceptual, no enums, tablas o flujo definitivo.
+- **Responsable o aprobador:** aprobación funcional de Israel; detalle sujeto a revisión operativa y contable.
+- **Fuente:** decisión funcional de Israel del 16 de julio de 2026.
+- **Documentos afectados:** ADR 0009 y PRD futuro.
+- **Requisitos derivados:** criterios de transición, autoridad y casos negativos.
+- **Criterio de revisión futura:** revisar con taller, inventario, compras y contabilidad.
+
 ## 3. Trazabilidad y revisión
 
 Este registro deberá revisarse antes de redactar cada ADR y antes de publicar el Bosquejo v2.0. Una revisión futura no modifica silenciosamente decisiones anteriores: crea una nueva versión y marca la decisión afectada como `SUPERADA`, indicando el identificador sustituto.

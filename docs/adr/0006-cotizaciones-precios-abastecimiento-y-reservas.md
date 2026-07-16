@@ -33,6 +33,9 @@ Sin versionado y separación de autoridad, una cotización enviada podría cambi
 - `SupplyRequest`, `SupplierOffer` y fuentes alternativas.
 - Faltantes y alcance del precio alternativo.
 - Referencias hacia pedido y orden de venta interna.
+- Servicio de corte comprado y su relación con la ejecución física sin mantener inventario.
+- Costos básicos estimados y reales de material y servicio conforme al ADR 0009.
+- Recotización causada por faltante o manufactura sin mutar la revisión aceptada.
 
 ## Fuera de alcance
 
@@ -74,6 +77,10 @@ Enviar una revisión la congela. Un cambio posterior genera una nueva `QuoteRevi
 
 El costo de referencia se trata como dato restringido y versionado, con fuente y fecha. No se asume que un precio residente en Migo sea oficial para ANKLO-OS hasta verificar su alcance conforme al ADR 0004.
 
+Para el primer alcance de manufactura, el costo estimado se limita al valor estimado del material a consumir y al precio estimado o cotizado del servicio de corte. El costo real operativo se limita al valor del material realmente consumido y al valor real cobrado por el servicio. Estos datos son restringidos, versionados y conciliables; no incorporan costos indirectos ni sustituyen los registros contables o tributarios oficiales de Migo.
+
+`CutService` representa el concepto comercial comprado o vendido por ejecutar el proceso y no mantiene inventario físico. Puede relacionarse con una `CutExecution` externa —PROMED en la operación actual— y con su estimación/oferta y cobro real sin confundirse con barras, productos fabricados, remanentes o merma.
+
 ### Aprobación y delegación
 
 Solo el dueño aprueba precios como autoridad permanente propuesta. Una `TemporaryDelegation` válida bajo ADR 0003 puede conceder esa capacidad como excepción controlada dentro de alcance, vigencia y límites explícitos; no crea una segunda autoridad permanente. La persona que prepara o registra una oferta no adquiere autoridad de aprobación por ese hecho.
@@ -99,6 +106,8 @@ Una fuente externa del ADR 0008 puede responder a la solicitud mediante referenc
 ### Precio ante faltante
 
 Por defecto, cuando se aprueba un precio alternativo por faltante, el nuevo precio se aplica a toda la línea. El dueño puede autorizar que se aplique únicamente a la cantidad faltante. La decisión queda en la revisión y no se recalcula al cambiar el cumplimiento real.
+
+Un faltante, una necesidad de manufactura, un cambio de costo estimado de material o servicio o una nueva oferta de corte pueden requerir recotización según una política comercial aprobada. La recotización crea una nueva `QuoteRevision` con motivo, entradas, costos restringidos, precio y aprobación aplicables. Nunca recalcula ni reemplaza silenciosamente una revisión ya enviada o aceptada. El evento exacto que obliga a recotizar y sus excepciones continúan pendientes de política y casos reales.
 
 ### Reservas
 
@@ -133,6 +142,9 @@ La aceptación de una revisión puede originar un pedido confirmado y una orden 
 - Una reserva termina o se libera mediante evento idempotente; la reserva firme permanece hasta despacho o cancelación salvo una política adicional aprobada y registrada.
 - Una reserva no altera stock contable de Migo.
 - Cambiar una política no modifica reservas o cotizaciones históricas.
+- Un servicio de corte no se presenta como existencia física.
+- Costos operativos de manufactura no se presentan como costos contables oficiales.
+- Un faltante o cambio de manufactura no recalcula una revisión enviada o aceptada; requiere nueva revisión y aprobación.
 
 ## Límites de responsabilidad
 
@@ -142,6 +154,7 @@ La aceptación de una revisión puede originar un pedido confirmado y una orden 
 - Abastecimiento registra solicitudes y ofertas; ADR 0008 gobierna disponibilidad externa y modalidades.
 - ADR 0003 gobierna permisos, contexto y delegaciones.
 - ADR 0004 gobierna referencias hacia orden/documentos Migo.
+- ADR 0009 gobierna proceso, servicio comprado, ejecución, propiedad, custodia y costos básicos de manufactura.
 - El sistema no determina validez contractual o tributaria de una aceptación.
 
 ## Alternativas consideradas
@@ -246,6 +259,7 @@ No son configurables la inmutabilidad de revisiones enviadas, la preservación d
 - [ADR 0005](0005-inventario-operativo-atp-y-conciliacion.md) aporta ATP y ejecución de reservas.
 - [ADR 0007](0007-piezas-remanentes-y-optimizacion-de-cortes.md) puede recibir requisitos desde líneas aceptadas y devolver costos/planes restringidos.
 - [ADR 0008](0008-inventario-externo-servipernos-y-prestamos.md) aporta fuentes externas confirmadas y modalidades separadas.
+- [ADR 0009](0009-manufactura-corte-subcontratado-propiedad-y-custodia.md) aporta el servicio de corte, costos operativos básicos y ejecución relacionada sin convertir el servicio en inventario.
 - Reportes y auditoría deben respetar visibilidad de costos y versión aceptada.
 
 ## Impacto de seguridad y auditoría
@@ -283,12 +297,13 @@ Este ADR no autoriza implementar pricing ni cargar datos reales.
 
 ## Fuentes internas consultadas
 
-- [Registro de decisiones de producto v2.0](../product/decisions/Registro_Decisiones_Producto_v2.0.md), `PROD-015`–`PROD-019`.
+- [Registro de decisiones de producto v2.0](../product/decisions/Registro_Decisiones_Producto_v2.0.md), `PROD-015`–`PROD-019`, `PROD-029`, `PROD-030`, `PROD-039` y `PROD-040`.
 - [Mapa de fuentes de verdad](../architecture/mapa-fuentes-de-verdad-v1.0.md).
 - [Preguntas y supuestos pendientes v2.0](../product/decisions/Preguntas_Supuestos_Pendientes_v2.0.md), `ADR-Q-003`, `LOG-Q-012`, `IMP-Q-003`, `IMP-Q-005`–`IMP-Q-007`, `CFG-001`–`CFG-005`, `CFG-010` y `CFG-011`.
 - [ADR 0001](0001-arquitectura-base.md).
 - [ADR 0002](0002-puertos-y-adaptadores.md).
 - [Auditoría documental previa](../product/discovery/Auditoria_Documental_ANKLO_DISTRIPERNOS_v1.0.md), hallazgos comerciales y de corte.
+- [ADR 0009](0009-manufactura-corte-subcontratado-propiedad-y-custodia.md).
 
 ## Relaciones con otros ADR
 
