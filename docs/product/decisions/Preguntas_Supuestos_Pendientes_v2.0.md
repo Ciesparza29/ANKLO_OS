@@ -12,6 +12,7 @@
 - [Preguntas abiertas anteriores](../../decisions/open-questions.md)
 - [Formulario de discovery anterior](../discovery/Formulario_Decisiones_Bloqueantes_v1.0.md)
 - [Manual Maestro v1.1](../../../ANKLO_Paquete_Documental_v1.0/Manual_Maestro_Supervision_Anclajes_ANKLO_v1.1.md)
+- [ADR 0009: manufactura, corte subcontratado, propiedad y custodia](../../adr/0009-manufactura-corte-subcontratado-propiedad-y-custodia.md)
 
 ## A. Preguntas que bloquean los ADR
 
@@ -50,6 +51,14 @@ Estas preguntas no reabren decisiones ya tomadas: `BusinessGroup` seguirá siend
 | LOG-Q-018 | ¿Cuál es la longitud mínima de remanente reutilizable por producto/especificación?                                                 | `Remnant` y reglas del optimizador                        | Política de taller y análisis económico/técnico                      |
 | LOG-Q-019 | ¿Qué atributos hacen compatibles una barra, pieza o remanente con una solicitud de corte?                                          | Producto base, pieza, remanente y plan                    | Catálogo, trazabilidad de material y reglas de taller                |
 | LOG-Q-020 | ¿Qué estados de cuarentena y bloqueo afectan ATP y quién puede liberarlos?                                                         | Movimientos, ATP y autorizaciones                         | Calidad, bodega y matriz de permisos                                 |
+| LOG-Q-021 | ¿Qué tolerancias dimensionales y de balance se aprobarán por familia o proceso de corte?                                           | Plan, ejecución, recepción y clasificación de pérdidas    | Procedimiento, casos reales y autoridad operativa/técnica            |
+| LOG-Q-022 | ¿Qué límites y criterios de criticidad permiten aprobación operativa de merma extraordinaria?                                      | `ExtraordinaryLoss`, segregación y escalamiento           | Política aprobada sin inferir montos ni porcentajes                  |
+| LOG-Q-023 | ¿Qué documento comercial real emite PROMED por el servicio y qué referencias mínimas lo relacionan con la ejecución?               | `CutService`, costo real y conciliación                   | Muestra autorizada y validación comercial/contable                   |
+| LOG-Q-024 | ¿Qué eventos de manufactura y corte deben producir una tarea de registro o conciliación con Migo?                                  | `ReconciliationTask`, movimientos y costos                | Matriz proceso–evento–documento–autoridad revisada por contabilidad  |
+| LOG-Q-025 | ¿Qué claves, formatos y semántica permiten conciliar entradas, salidas, merma, residuo y servicio de corte con Migo?               | Correlación e idempotencia de conciliación                | Exportaciones, identificadores y casos de corrección reales          |
+| LOG-Q-026 | ¿Qué política futura permitirá incorporar costos indirectos y con qué autoridad y vigencia?                                        | Versiones posteriores de `CostEstimate` y `ActualCost`    | Política de costos y validación contable                             |
+| LOG-Q-027 | ¿Qué casos reales controlados y resultados esperados validarán consumo previsto, balance y costos básicos?                         | Pruebas de diseño del primer incremento                   | Casos anonimizados, mediciones y revisión de taller/inventario       |
+| LOG-Q-028 | ¿Qué usuarios concretos recibirán roles de solicitud, planificación, aprobación, ejecución, recepción, inventario y dirección?     | Autorización y segregación de manufactura                 | Matriz RACI/capacidades aprobada                                     |
 
 ## C. Preguntas que bloquean la implementación
 
@@ -70,6 +79,7 @@ Estas preguntas no reabren decisiones ya tomadas: `BusinessGroup` seguirá siend
 | IMP-Q-013 | ¿Qué objetivo y desempate usará inicialmente el optimizador: costo, desperdicio, remanentes, barras o patrones?              | Corte                             | Prioridad/ponderación, ejemplos y solución esperada                       |
 | IMP-Q-014 | ¿Qué dispositivos, navegadores y escenarios offline debe soportar la interfaz móvil inicial?                                 | Operación de técnicos             | Matriz de dispositivos y tareas críticas probadas                         |
 | IMP-Q-015 | ¿Qué datos personales y técnicos puede mostrar cada informe/exportación consolidada?                                         | Reportes y seguridad              | Clasificación, propósito, permiso y audiencia aprobados                   |
+| IMP-Q-016 | ¿Manufactura y corte formarán parte del MVP general o ingresarán como incremento posterior?                                  | Alcance y secuencia del producto  | Decisión documentada de Israel tras revisar ADR 0009 y casos reales       |
 
 ## D. Supuestos temporales operables
 
@@ -100,7 +110,33 @@ Estas decisiones ya están adoptadas como capacidades configurables. No deben ma
 | CFG-010 | Permisos de costos                           | Visibilidad para dueño y supervisor por entidad/contexto        | Dueño/superadministrador                   |
 | CFG-011 | Delegación de aprobación de precios          | Receptor, alcance, vigencia, límites y revocación               | Dueño                                      |
 | CFG-012 | Presentación administrativa                  | Densidad, columnas, filtros y acciones guardadas                | Producto/usuarios autorizados              |
+| CFG-013 | Modalidad y proveedor de corte               | `INTERNAL`/`EXTERNAL`, proveedor, alcance y vigencia            | Autoridad operativa por contexto           |
+| CFG-014 | Identificación física híbrida                | Familias con identidad individual o lote homogéneo              | Inventario/calidad según política aprobada |
+| CFG-015 | Umbral de remanente                          | 2 pulgadas como política temporal inicial; futuras versiones    | Autoridad operativa/inventario             |
+| CFG-016 | Pérdidas normales y límites extraordinarios  | Componentes aprobados, tolerancia, límite y escalamiento        | Operación, inventario y dirección          |
+| CFG-017 | Componentes de costo habilitados             | Material y servicio en primer alcance; extensiones posteriores  | Dirección con validación contable          |
 
 ## F. Criterio de cierre de preguntas
 
 Para cerrar una pregunta se debe registrar decisión, autoridad, evidencia, fecha de vigencia, excepciones y artefactos afectados en una nueva versión del [registro de decisiones](./Registro_Decisiones_Producto_v2.0.md). Una respuesta informal o un valor observado no se transforma automáticamente en política general.
+
+## G. Cierres documentales de manufactura y corte
+
+Las decisiones funcionales de Israel del 16 de julio de 2026 cierran los siguientes asuntos de alcance, sin resolver los datos técnicos, contables o contractuales residuales:
+
+| Asunto previamente abierto o ausente                 | Resolución funcional                                                                                    | Decisión               |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ---------------------- |
+| Naturaleza del corte y quién puede ejecutarlo        | Transformación física independiente del ejecutor; modalidad `INTERNAL` o `EXTERNAL` por orden/ejecución | `PROD-028`             |
+| Corte como proceso, servicio o bien                  | Proceso, `CutService` y `ManufacturedProduct` son conceptos distintos                                   | `PROD-029`             |
+| Papel de PROMED                                      | Proveedor externo que ejecuta servicio sin adquirir barras ni gobernar inventario                       | `PROD-030`             |
+| Propiedad y custodia actuales                        | Distripernos conserva propiedad y control físico; PROMED recibe custodia operacional temporal           | `PROD-031`             |
+| Situación actual y capacidad futura de ANKLO         | ANKLO actual no es empresa contable independiente; una futura entidad podrá ser propietaria/solicitante | `PROD-032`, `PROD-033` |
+| Separación de responsabilidades                      | Solicitante, planificador, aprobador, ejecutor y receptor son capacidades diferentes                    | `PROD-034`             |
+| Estrategia de identificación                         | Identificación híbrida individual/lote sin pérdida de genealogía                                        | `PROD-035`             |
+| Valor inicial de candidato a remanente               | 2 pulgadas como política temporal configurable, no aptitud automática                                   | `PROD-036`             |
+| Clasificación de salidas y aprobación extraordinaria | Producto, remanente, merma normal/extraordinaria y residuo separados; escalamiento por roles            | `PROD-037`, `PROD-038` |
+| Alcance inicial de costos                            | Solo material y servicio, estimados y reales; Migo conserva autoridad oficial                           | `PROD-039`             |
+| Forma del primer incremento futuro                   | Planificación y ejecución manual con cálculo determinista; sin optimizador                              | `PROD-040`             |
+| Configuración frente a integridad y estados          | Políticas versionables sin romper invariantes; estados conceptuales revisables                          | `PROD-041`, `PROD-042` |
+
+`LOG-Q-018` queda resuelta únicamente para la política temporal inicial de 2 pulgadas. Permanece abierta para umbrales futuros por producto o especificación y para la validación de compatibilidad y aptitud. `IMP-Q-013` continúa abierta porque el optimizador automático no forma parte del primer incremento manual aprobado.
