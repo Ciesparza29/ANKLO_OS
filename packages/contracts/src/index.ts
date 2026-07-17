@@ -27,6 +27,9 @@ export const CUT_REQUEST_CAPABILITIES = [
   "cut_request:submit",
   "cut_request:cancel",
 ] as const;
+
+export const PRODUCT_CAPABILITIES = ["product:create", "product:read"] as const;
+
 export const CUT_REQUEST_HISTORY_ACTIONS = [
   "CUT_REQUEST_CREATED",
   "CUT_REQUEST_SUBMITTED",
@@ -36,6 +39,7 @@ export const CUT_REQUEST_HISTORY_ACTIONS = [
 export const cutRequestStatusSchema = z.enum(CUT_REQUEST_STATUSES);
 export const cutExecutionModeSchema = z.enum(CUT_EXECUTION_MODES);
 export const cutRequestCapabilitySchema = z.enum(CUT_REQUEST_CAPABILITIES);
+export const productCapabilitySchema = z.enum(PRODUCT_CAPABILITIES);
 export const cutRequestHistoryActionSchema = z.enum(
   CUT_REQUEST_HISTORY_ACTIONS,
 );
@@ -155,9 +159,21 @@ export const cutRequestHistoryResponseSchema = z
   .object({ history: z.array(cutRequestHistoryEntrySchema) })
   .strict();
 
+export const createProductSchema = z
+  .object({
+    name: requiredText(200),
+    description: optionalText(1000),
+  })
+  .strict();
+
+export const productListQuerySchema = z
+  .object({ isActive: z.boolean().optional() })
+  .strict();
+
 export type CutRequestStatus = z.infer<typeof cutRequestStatusSchema>;
 export type CutExecutionMode = z.infer<typeof cutExecutionModeSchema>;
 export type CutRequestCapability = z.infer<typeof cutRequestCapabilitySchema>;
+export type ProductCapability = z.infer<typeof productCapabilitySchema>;
 export type CutRequestHistoryAction = z.infer<
   typeof cutRequestHistoryActionSchema
 >;
@@ -204,4 +220,18 @@ export interface CutRequestDto {
   readonly updatedAt: string;
   readonly createdBy: string;
   readonly lines: readonly CutRequestLineDto[];
+}
+
+export type CreateProductInput = z.infer<typeof createProductSchema>;
+export type ProductListQuery = z.infer<typeof productListQuerySchema>;
+
+export interface ProductDto {
+  readonly id: string;
+  readonly organizationId: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly isActive: boolean;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly createdBy: string;
 }
