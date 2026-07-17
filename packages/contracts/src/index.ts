@@ -165,6 +165,8 @@ export const createProductSchema = z
     description: optionalText(1000),
     sku: optionalText(120),
     externalCode: optionalText(120),
+    categoryId: z.string().uuid().optional(),
+    baseUnitId: z.string().uuid().optional(),
     category: optionalText(100),
     manufacturer: optionalText(100),
     baseUnit: optionalText(32),
@@ -237,6 +239,8 @@ export interface ProductDto {
   readonly description?: string;
   readonly sku?: string;
   readonly externalCode?: string;
+  readonly categoryId?: string;
+  readonly baseUnitId?: string;
   readonly category?: string;
   readonly manufacturer?: string;
   readonly baseUnit?: string;
@@ -245,3 +249,27 @@ export interface ProductDto {
   readonly updatedAt: string;
   readonly createdBy: string;
 }
+
+export const productCategoryDtoSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  name: z.string(),
+  code: z.string().optional(),
+  isActive: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type ProductCategoryDto = z.infer<typeof productCategoryDtoSchema>;
+
+export const unitOfMeasureDtoSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  name: z.string(),
+  symbol: z.string(),
+  isActive: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type UnitOfMeasureDto = z.infer<typeof unitOfMeasureDtoSchema>;

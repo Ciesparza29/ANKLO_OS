@@ -25,26 +25,26 @@ enum CutRequestOperationAction {
 }
 
 model CutRequest {
-  id                 String           @id @default(uuid()) @db.Uuid
-  organizationId     String           @map("organization_id") @db.Uuid
-  requestingUnit     String           @map("requesting_unit") @db.VarChar(200)
-  requester           String           @db.VarChar(200)
-  materialOwner       String?          @map("material_owner") @db.VarChar(200)
-  currentCustodian    String           @map("current_custodian") @db.VarChar(200)
-  executionMode       CutExecutionMode @map("execution_mode")
-  expectedExecutor    String?          @map("expected_executor") @db.VarChar(200)
-  externalProvider    String?          @map("external_provider") @db.VarChar(200)
-  reference            String?          @db.VarChar(120)
-  priority             String           @db.VarChar(80)
-  requiredAt           DateTime         @map("required_at") @db.Timestamptz(6)
-  observations         String?
-  status               CutRequestStatus @default(DRAFT)
-  version              Int              @default(1)
-  createdAt            DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt            DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy            String           @map("created_by") @db.Uuid
-  lines                CutRequestLine[]
-  operations           CutRequestOperation[]
+  id               String                @id @default(uuid()) @db.Uuid
+  organizationId   String                @map("organization_id") @db.Uuid
+  requestingUnit   String                @map("requesting_unit") @db.VarChar(200)
+  requester        String                @db.VarChar(200)
+  materialOwner    String?               @map("material_owner") @db.VarChar(200)
+  currentCustodian String                @map("current_custodian") @db.VarChar(200)
+  executionMode    CutExecutionMode      @map("execution_mode")
+  expectedExecutor String?               @map("expected_executor") @db.VarChar(200)
+  externalProvider String?               @map("external_provider") @db.VarChar(200)
+  reference        String?               @db.VarChar(120)
+  priority         String                @db.VarChar(80)
+  requiredAt       DateTime              @map("required_at") @db.Timestamptz(6)
+  observations     String?
+  status           CutRequestStatus      @default(DRAFT)
+  version          Int                   @default(1)
+  createdAt        DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime              @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy        String                @map("created_by") @db.Uuid
+  lines            CutRequestLine[]
+  operations       CutRequestOperation[]
 
   @@unique([organizationId, id])
   @@index([organizationId, status, requiredAt], map: "cut_requests_org_status_required_idx")
@@ -53,18 +53,18 @@ model CutRequest {
 }
 
 model CutRequestLine {
-  id                    String     @id @default(uuid()) @db.Uuid
-  organizationId        String     @map("organization_id") @db.Uuid
-  cutRequestId           String     @map("cut_request_id") @db.Uuid
-  productSpecification  String     @map("product_specification") @db.VarChar(500)
-  quantity              Decimal    @db.Decimal
-  unit                  String     @db.VarChar(32)
-  requestedLength       Decimal    @map("requested_length") @db.Decimal
-  tolerance             String?    @db.VarChar(120)
-  observation           String?
-  position              Int
-  createdAt             DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
-  cutRequest            CutRequest @relation(fields: [organizationId, cutRequestId], references: [organizationId, id], onDelete: Restrict, map: "cut_request_lines_request_fkey")
+  id                   String     @id @default(uuid()) @db.Uuid
+  organizationId       String     @map("organization_id") @db.Uuid
+  cutRequestId         String     @map("cut_request_id") @db.Uuid
+  productSpecification String     @map("product_specification") @db.VarChar(500)
+  quantity             Decimal    @db.Decimal
+  unit                 String     @db.VarChar(32)
+  requestedLength      Decimal    @map("requested_length") @db.Decimal
+  tolerance            String?    @db.VarChar(120)
+  observation          String?
+  position             Int
+  createdAt            DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  cutRequest           CutRequest @relation(fields: [organizationId, cutRequestId], references: [organizationId, id], onDelete: Restrict, map: "cut_request_lines_request_fkey")
 
   @@unique([organizationId, cutRequestId, position], map: "cut_request_lines_org_request_position_key")
   @@index([organizationId, cutRequestId], map: "cut_request_lines_org_request_idx")
@@ -72,13 +72,13 @@ model CutRequestLine {
 }
 
 model CutRequestOperation {
-  id                 String                    @id @default(uuid()) @db.Uuid
-  organizationId     String                    @map("organization_id") @db.Uuid
-  clientOperationId  String                    @map("client_operation_id") @db.Uuid
-  cutRequestId       String                    @map("cut_request_id") @db.Uuid
-  action             CutRequestOperationAction
-  createdAt          DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
-  cutRequest         CutRequest                @relation(fields: [organizationId, cutRequestId], references: [organizationId, id], onDelete: Restrict, map: "cut_request_operations_request_fkey")
+  id                String                    @id @default(uuid()) @db.Uuid
+  organizationId    String                    @map("organization_id") @db.Uuid
+  clientOperationId String                    @map("client_operation_id") @db.Uuid
+  cutRequestId      String                    @map("cut_request_id") @db.Uuid
+  action            CutRequestOperationAction
+  createdAt         DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  cutRequest        CutRequest                @relation(fields: [organizationId, cutRequestId], references: [organizationId, id], onDelete: Restrict, map: "cut_request_operations_request_fkey")
 
   @@unique([organizationId, clientOperationId], map: "cut_request_operations_org_client_key")
   @@index([organizationId, cutRequestId], map: "cut_request_operations_org_request_idx")
@@ -86,18 +86,18 @@ model CutRequestOperation {
 }
 
 model AuditEvent {
-  id              String                    @id @default(uuid()) @db.Uuid
-  organizationId  String                    @map("organization_id") @db.Uuid
-  actorId          String                    @map("actor_id") @db.Uuid
-  entityType       String                    @map("entity_type") @db.VarChar(80)
-  entityId         String                    @map("entity_id") @db.Uuid
-  action           CutRequestOperationAction
-  occurredAt       DateTime                  @map("occurred_at") @db.Timestamptz(6)
-  before           Json?
-  after            Json
-  reason           String?
-  correlationId    String                    @map("correlation_id") @db.Uuid
-  createdAt        DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
+  id             String                    @id @default(uuid()) @db.Uuid
+  organizationId String                    @map("organization_id") @db.Uuid
+  actorId        String                    @map("actor_id") @db.Uuid
+  entityType     String                    @map("entity_type") @db.VarChar(80)
+  entityId       String                    @map("entity_id") @db.Uuid
+  action         CutRequestOperationAction
+  occurredAt     DateTime                  @map("occurred_at") @db.Timestamptz(6)
+  before         Json?
+  after          Json
+  reason         String?
+  correlationId  String                    @map("correlation_id") @db.Uuid
+  createdAt      DateTime                  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   @@index([organizationId, entityType, entityId, occurredAt], map: "audit_events_org_entity_occurred_idx")
   @@index([organizationId, correlationId], map: "audit_events_org_correlation_idx")
@@ -111,6 +111,8 @@ model Product {
   description    String?  @db.VarChar(1000)
   sku            String?  @db.VarChar(120)
   externalCode   String?  @map("external_code") @db.VarChar(120)
+  categoryId     String?  @map("category_id") @db.Uuid
+  baseUnitId     String?  @map("base_unit_id") @db.Uuid
   category       String?  @db.VarChar(100)
   manufacturer   String?  @db.VarChar(100)
   baseUnit       String?  @map("base_unit") @db.VarChar(32)
@@ -119,7 +121,42 @@ model Product {
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy      String   @map("created_by") @db.Uuid
 
+  categoryRef ProductCategory? @relation(fields: [organizationId, categoryId], references: [organizationId, id], onDelete: Restrict, map: "products_category_fkey")
+  baseUnitRef UnitOfMeasure?   @relation(fields: [organizationId, baseUnitId], references: [organizationId, id], onDelete: Restrict, map: "products_base_unit_fkey")
+
   @@unique([organizationId, id])
   @@index([organizationId, isActive], map: "products_org_is_active_idx")
   @@map("products")
+}
+
+model ProductCategory {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String   @db.VarChar(100)
+  code           String?  @db.VarChar(50)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  products Product[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, isActive], map: "product_categories_org_is_active_idx")
+  @@map("product_categories")
+}
+
+model UnitOfMeasure {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String   @db.VarChar(50)
+  symbol         String   @db.VarChar(10)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  products Product[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, isActive], map: "units_of_measure_org_is_active_idx")
+  @@map("units_of_measure")
 }

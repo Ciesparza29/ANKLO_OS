@@ -39,6 +39,8 @@ export class Product {
       ...(input.description ? { description: input.description } : {}),
       ...(input.sku ? { sku: input.sku } : {}),
       ...(input.externalCode ? { externalCode: input.externalCode } : {}),
+      ...(input.categoryId ? { categoryId: input.categoryId } : {}),
+      ...(input.baseUnitId ? { baseUnitId: input.baseUnitId } : {}),
       ...(input.category ? { category: input.category } : {}),
       ...(input.manufacturer ? { manufacturer: input.manufacturer } : {}),
       ...(input.baseUnit ? { baseUnit: input.baseUnit } : {}),

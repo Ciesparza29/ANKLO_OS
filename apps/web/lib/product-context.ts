@@ -3,8 +3,18 @@ import {
   cutRequestIdSchema,
   type ProductCapability,
 } from "@anklo/contracts";
-import { getPrismaClient, PrismaProductStore } from "@anklo/db";
-import { ProductService, type ProductActorContext } from "@anklo/domain";
+import {
+  getPrismaClient,
+  PrismaProductStore,
+  PrismaProductCategoryStore,
+  PrismaUnitOfMeasureStore,
+} from "@anklo/db";
+import {
+  ProductService,
+  type ProductActorContext,
+  ProductCategoryService,
+  UnitOfMeasureService,
+} from "@anklo/domain";
 
 function csv(value: string | undefined): string[] {
   return (value ?? "")
@@ -37,5 +47,17 @@ export function getProductService(): ProductService {
     store: new PrismaProductStore(getPrismaClient()),
     now: () => new Date(),
     newId: () => crypto.randomUUID(),
+  });
+}
+
+export function getProductCategoryService(): ProductCategoryService {
+  return new ProductCategoryService({
+    store: new PrismaProductCategoryStore(getPrismaClient()),
+  });
+}
+
+export function getUnitOfMeasureService(): UnitOfMeasureService {
+  return new UnitOfMeasureService({
+    store: new PrismaUnitOfMeasureStore(getPrismaClient()),
   });
 }

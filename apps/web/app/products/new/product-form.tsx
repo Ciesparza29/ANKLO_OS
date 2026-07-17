@@ -1,25 +1,61 @@
 "use client";
 
-import { createProductSchema } from "@anklo/contracts";
-import { useState } from "react";
+import {
+  createProductSchema,
+  type ProductCategoryDto,
+  type UnitOfMeasureDto,
+} from "@anklo/contracts";
+import { useState, useEffect } from "react";
 
 export function ProductForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [categories, setCategories] = useState<ProductCategoryDto[]>([]);
+  const [units, setUnits] = useState<UnitOfMeasureDto[]>([]);
+
+  useEffect(() => {
+    async function loadCatalogs() {
+      try {
+        const [catRes, unitRes] = await Promise.all([
+          fetch("/api/categories"),
+          fetch("/api/units"),
+        ]);
+        if (catRes.ok) {
+          const { categories } = await catRes.json();
+          setCategories(categories);
+        }
+        if (unitRes.ok) {
+          const { units } = await unitRes.json();
+          setUnits(units);
+        }
+      } catch (err) {
+        console.error("Failed to load catalogs", err);
+      }
+    }
+    loadCatalogs();
+  }, []);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     setError("");
 
+    const categoryId = form.get("categoryId")?.toString() || undefined;
+    const baseUnitId = form.get("baseUnitId")?.toString() || undefined;
+
+    const selectedCategory = categories.find((c) => c.id === categoryId);
+    const selectedUnit = units.find((u) => u.id === baseUnitId);
+
     const parsed = createProductSchema.safeParse({
       name: form.get("name"),
       description: form.get("description") || undefined,
       sku: form.get("sku") || undefined,
       externalCode: form.get("externalCode") || undefined,
-      category: form.get("category") || undefined,
+      categoryId,
+      baseUnitId,
+      category: selectedCategory?.name || undefined,
       manufacturer: form.get("manufacturer") || undefined,
-      baseUnit: form.get("baseUnit") || undefined,
+      baseUnit: selectedUnit?.name || undefined,
     });
 
     if (!parsed.success) {
@@ -182,22 +218,27 @@ export function ProductForm() {
               }}
             />
           </label>
-          {/* TODO: Estos campos son texto libre temporalmente. En el futuro evolucionarán a un catálogo relacional propio */}
+          {/* Catálogos relacionales, con fallback a sincronizar el texto */}
           <label
             style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}
           >
             Categoría / Familia
-            <input
-              name="category"
-              type="text"
-              placeholder="Ej. Adhesivos"
-              maxLength={100}
+            <select
+              name="categoryId"
               style={{
                 padding: "0.5rem",
                 borderRadius: "4px",
                 border: "1px solid #cbd5e1",
+                backgroundColor: "white",
               }}
-            />
+            >
+              <option value="">-- Seleccionar --</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
           </label>
           <label
             style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}
@@ -219,17 +260,22 @@ export function ProductForm() {
             style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}
           >
             Unidad de Medida Base
-            <input
-              name="baseUnit"
-              type="text"
-              placeholder="Ej. Pieza"
-              maxLength={32}
+            <select
+              name="baseUnitId"
               style={{
                 padding: "0.5rem",
                 borderRadius: "4px",
                 border: "1px solid #cbd5e1",
+                backgroundColor: "white",
               }}
-            />
+            >
+              <option value="">-- Seleccionar --</option>
+              {units.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.name} ({u.symbol})
+                </option>
+              ))}
+            </select>
           </label>
         </div>
       </fieldset>
