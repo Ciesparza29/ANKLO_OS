@@ -1,4 +1,8 @@
-import type { CutRequestDto } from "@anklo/contracts";
+import type {
+  CutRequestDto,
+  CutRequestHistoryEntryDto,
+} from "@anklo/contracts";
+import { CutRequestAuthorizationError } from "@anklo/domain";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const testContext = vi.hoisted(() => {
@@ -6,6 +10,7 @@ const testContext = vi.hoisted(() => {
     create: vi.fn(),
     list: vi.fn(),
     get: vi.fn(),
+    getHistory: vi.fn(),
     submit: vi.fn(),
     cancel: vi.fn(),
   };
@@ -32,6 +37,7 @@ vi.mock("@/lib/cut-request-context", () => ({
 
 import { GET as list, POST as create } from "./route";
 import { GET as get } from "./[id]/route";
+import { GET as getHistory } from "./[id]/history/route";
 import { POST as submit } from "./[id]/submit/route";
 import { POST as cancel } from "./[id]/cancel/route";
 
@@ -53,6 +59,21 @@ const dto: CutRequestDto = {
   createdBy: "00000000-0000-4000-8000-000000000001",
   lines: [],
 };
+const history: readonly CutRequestHistoryEntryDto[] = [
+  {
+    id: "00000000-0000-4000-8000-000000000020",
+    action: "CUT_REQUEST_CREATED",
+    occurredAt: "2026-07-16T12:00:00.000Z",
+    actorReference: "00000000-0000-4000-8000-000000000001",
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000021",
+    action: "CUT_REQUEST_CANCELLED",
+    occurredAt: "2026-07-16T13:00:00.000Z",
+    actorReference: "00000000-0000-4000-8000-000000000001",
+    reason: "Motivo ficticio autorizado",
+  },
+];
 
 describe("API cut requests", () => {
   beforeEach(() => {
@@ -126,9 +147,9 @@ describe("API cut requests", () => {
     mocks.submit.mockResolvedValue({ ...dto, status: "SUBMITTED", version: 2 });
     mocks.cancel.mockResolvedValue({ ...dto, status: "CANCELLED", version: 2 });
     const context = { params: Promise.resolve({ id }) };
-    expect((await get(new Request("http://localhost"), context)).status).toBe(
-      200,
-    );
+    const detailResponse = await get(new Request("http://localhost"), context);
+    expect(detailResponse.status).toBe(200);
+    expect(await detailResponse.json()).toEqual({ request: dto });
     expect(
       (
         await submit(
@@ -158,6 +179,41 @@ describe("API cut requests", () => {
         )
       ).status,
     ).toBe(200);
+  });
+
+  it("devuelve historial minimizado desde el recurso protegido", async () => {
+    mocks.getHistory.mockResolvedValue(history);
+    const response = await getHistory(new Request("http://localhost"), {
+      params: Promise.resolve({ id }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ history });
+    expect(mocks.getHistory).toHaveBeenCalledOnce();
+    expect(JSON.stringify(history)).not.toMatch(
+      /before|after|organizationId|correlationId|status/,
+    );
+  });
+
+  it("mantiene la denegación server-side del historial", async () => {
+    mocks.getHistory.mockRejectedValue(
+      new CutRequestAuthorizationError("Operación no autorizada"),
+    );
+    const response = await getHistory(new Request("http://localhost"), {
+      params: Promise.resolve({ id }),
+    });
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: "FORBIDDEN" });
+  });
+
+  it("falla cerrado si la proyección de historial contiene internals", async () => {
+    mocks.getHistory.mockResolvedValue([
+      { ...history[0], before: { status: "DRAFT" } },
+    ]);
+    const response = await getHistory(new Request("http://localhost"), {
+      params: Promise.resolve({ id }),
+    });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "INTERNAL_ERROR" });
   });
 
   it("valida acceso directo por UUID", async () => {

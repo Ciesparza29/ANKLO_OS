@@ -16,6 +16,7 @@ suite("PrismaCutRequestStore con PostgreSQL", () => {
   const capabilities = new Set<CutRequestCapability>([
     "cut_request:create",
     "cut_request:read",
+    "cut_request:read_history",
     "cut_request:submit",
     "cut_request:cancel",
   ]);
@@ -31,7 +32,7 @@ suite("PrismaCutRequestStore con PostgreSQL", () => {
       store: new PrismaCutRequestStore(prisma),
       recognizedUnits: new Set(["MM"]),
       allowTolerance: false,
-      now: () => new Date(),
+      now: () => new Date("2026-07-16T12:00:00.000Z"),
       newId: () => crypto.randomUUID(),
     });
   });
@@ -123,6 +124,90 @@ suite("PrismaCutRequestStore con PostgreSQL", () => {
     await expect(service.get(actor, created.id)).resolves.toMatchObject({
       id: created.id,
       status: "CANCELLED",
+    });
+    const beforeRead = await prisma.$transaction(async (transaction) => {
+      await transaction.$executeRaw`SELECT set_config('app.organization_id', ${organizationId}, true)`;
+      return {
+        request: await transaction.cutRequest.findFirstOrThrow({
+          where: { organizationId, id: created.id },
+        }),
+        audits: await transaction.auditEvent.count({
+          where: { organizationId, entityId: created.id },
+        }),
+        operations: await transaction.cutRequestOperation.count({
+          where: { organizationId, cutRequestId: created.id },
+        }),
+      };
+    });
+    const first = await service.getHistory(actor, created.id);
+    const second = await service.getHistory(actor, created.id);
+    expect(second).toEqual(first);
+    expect(first).toEqual(
+      [...first].sort(
+        (left, right) =>
+          left.occurredAt.localeCompare(right.occurredAt) ||
+          left.id.localeCompare(right.id),
+      ),
+    );
+    expect(
+      first.find((event) => event.action === "CUT_REQUEST_CANCELLED"),
+    ).toMatchObject({ reason: "Cancelación de prueba ficticia" });
+    expect(JSON.stringify(first)).not.toMatch(
+      /before|after|organizationId|correlationId|status/,
+    );
+    const afterRead = await prisma.$transaction(async (transaction) => {
+      await transaction.$executeRaw`SELECT set_config('app.organization_id', ${organizationId}, true)`;
+      return {
+        request: await transaction.cutRequest.findFirstOrThrow({
+          where: { organizationId, id: created.id },
+        }),
+        audits: await transaction.auditEvent.count({
+          where: { organizationId, entityId: created.id },
+        }),
+        operations: await transaction.cutRequestOperation.count({
+          where: { organizationId, cutRequestId: created.id },
+        }),
+      };
+    });
+    expect(afterRead).toEqual(beforeRead);
+    await expect(
+      service.getHistory(
+        { ...actor, organizationId: otherOrganizationId },
+        created.id,
+      ),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("detecta una solicitud del tenant sin eventos", async () => {
+    const requestId = crypto.randomUUID();
+    const at = new Date("2026-07-16T12:00:00.000Z");
+    await prisma.$transaction(async (transaction) => {
+      await transaction.$executeRaw`SELECT set_config('app.organization_id', ${organizationId}, true)`;
+      await transaction.cutRequest.create({
+        data: {
+          id: requestId,
+          organizationId,
+          requestingUnit: "Unidad ficticia",
+          requester: "Solicitante ficticio",
+          currentCustodian: "Custodio ficticio",
+          executionMode: "INTERNAL",
+          priority: "Prueba",
+          requiredAt: new Date("2026-07-20T12:00:00.000Z"),
+          status: "DRAFT",
+          version: 1,
+          createdAt: at,
+          updatedAt: at,
+          createdBy: actor.actorId,
+        },
+      });
+    });
+    await expect(service.getHistory(actor, requestId)).rejects.toMatchObject({
+      code: "HISTORY_INCONSISTENT",
+    });
+    await expect(service.get(actor, requestId)).resolves.toMatchObject({
+      id: requestId,
+      status: "DRAFT",
+      version: 1,
     });
   });
 });

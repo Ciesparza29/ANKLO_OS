@@ -1,6 +1,7 @@
 import type {
   CreateCutRequestInput,
   CutRequestCapability,
+  CutRequestHistoryEntryDto,
   CutRequestListQuery,
 } from "@anklo/contracts";
 import { describe, expect, it } from "vitest";
@@ -65,6 +66,37 @@ class MemoryStore implements CutRequestStore {
       .map((request) => structuredClone(request));
   }
 
+  async listHistory(
+    organizationId: string,
+    requestId: string,
+  ): Promise<readonly CutRequestHistoryEntryDto[]> {
+    return this.audits
+      .filter(
+        (audit) =>
+          audit.organizationId === organizationId &&
+          audit.entityId === requestId,
+      )
+      .sort(
+        (left, right) =>
+          left.occurredAt.localeCompare(right.occurredAt) ||
+          left.id.localeCompare(right.id),
+      )
+      .map((audit) => {
+        const event = {
+          id: audit.id,
+          occurredAt: audit.occurredAt,
+          actorReference: audit.actorId,
+        };
+        return audit.action === "CUT_REQUEST_CANCELLED"
+          ? {
+              ...event,
+              action: "CUT_REQUEST_CANCELLED" as const,
+              reason: audit.reason ?? "",
+            }
+          : { ...event, action: audit.action };
+      });
+  }
+
   async findOperationResult(
     organizationId: string,
     clientOperationId: string,
@@ -110,6 +142,7 @@ const newId = () =>
 const capabilities = new Set<CutRequestCapability>([
   "cut_request:create",
   "cut_request:read",
+  "cut_request:read_history",
   "cut_request:submit",
   "cut_request:cancel",
 ]);
@@ -203,6 +236,100 @@ describe("CutRequestService", () => {
     expect(cancelled.status).toBe("CANCELLED");
     expect(store.requests.size).toBe(1);
     expect(store.audits.at(-1)?.reason).toBe("Dato ficticio ya no requerido");
+  });
+
+  it("exige conjuntamente lectura básica e historial", async () => {
+    const { service } = setup();
+    const created = await service.create(actor(), input());
+    await expect(
+      service.getHistory(
+        {
+          ...actor(),
+          capabilities: new Set<CutRequestCapability>(["cut_request:read"]),
+        },
+        created.id,
+      ),
+    ).rejects.toBeInstanceOf(CutRequestAuthorizationError);
+    await expect(
+      service.getHistory(
+        {
+          ...actor(),
+          capabilities: new Set<CutRequestCapability>([
+            "cut_request:read_history",
+          ]),
+        },
+        created.id,
+      ),
+    ).rejects.toBeInstanceOf(CutRequestAuthorizationError);
+    await expect(
+      service.get(
+        {
+          ...actor(),
+          capabilities: new Set<CutRequestCapability>(["cut_request:read"]),
+        },
+        created.id,
+      ),
+    ).resolves.toMatchObject({ id: created.id });
+  });
+
+  it("devuelve historial minimizado, estable y sin efectos", async () => {
+    const { service, store } = setup();
+    const created = await service.create(actor(), input());
+    await service.cancel(actor(), created.id, {
+      clientOperationId: newId(),
+      expectedVersion: 1,
+      reason: "Motivo ficticio autorizado",
+    });
+    const before = {
+      request: await store.findById(orgA, created.id),
+      audits: structuredClone(store.audits),
+      operations: structuredClone([...store.operations]),
+    };
+    const first = await service.getHistory(actor(), created.id);
+    const second = await service.getHistory(actor(), created.id);
+    expect(second).toEqual(first);
+    expect(first).toEqual(
+      [...first].sort(
+        (left, right) =>
+          left.occurredAt.localeCompare(right.occurredAt) ||
+          left.id.localeCompare(right.id),
+      ),
+    );
+    expect(first.at(-1)).toMatchObject({
+      action: "CUT_REQUEST_CANCELLED",
+      reason: "Motivo ficticio autorizado",
+      actorReference: actor().actorId,
+    });
+    expect(JSON.stringify(first)).not.toMatch(
+      /before|after|organizationId|correlationId|status/,
+    );
+    expect(await store.findById(orgA, created.id)).toEqual(before.request);
+    expect(store.audits).toEqual(before.audits);
+    expect([...store.operations]).toEqual(before.operations);
+  });
+
+  it("no revela solicitudes de otra organización", async () => {
+    const { service } = setup();
+    const created = await service.create(actor(), input());
+    await expect(
+      service.getHistory(actor(orgB), created.id),
+    ).rejects.toBeInstanceOf(CutRequestNotFoundError);
+  });
+
+  it("trata una solicitud válida sin eventos como inconsistencia controlada", async () => {
+    const { service, store } = setup();
+    const created = await service.create(actor(), input());
+    store.audits.splice(0);
+    await expect(service.getHistory(actor(), created.id)).rejects.toMatchObject(
+      {
+        code: "HISTORY_INCONSISTENT",
+      },
+    );
+    await expect(service.get(actor(), created.id)).resolves.toMatchObject({
+      id: created.id,
+      status: "DRAFT",
+      version: 1,
+    });
   });
 
   it("revierte la transición si falla auditoría", async () => {
