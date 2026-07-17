@@ -189,6 +189,28 @@ export function ProductList() {
                     textTransform: "uppercase",
                   }}
                 >
+                  SKU
+                </th>
+                <th
+                  style={{
+                    padding: "1rem",
+                    fontWeight: "600",
+                    color: "#475569",
+                    fontSize: "0.85rem",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Categoría
+                </th>
+                <th
+                  style={{
+                    padding: "1rem",
+                    fontWeight: "600",
+                    color: "#475569",
+                    fontSize: "0.85rem",
+                    textTransform: "uppercase",
+                  }}
+                >
                   Descripción Técnica
                 </th>
                 <th
@@ -235,6 +257,22 @@ export function ProductList() {
                     }}
                   >
                     {product.name}
+                  </td>
+                  <td
+                    style={{
+                      padding: "1rem",
+                      color: "#475569",
+                    }}
+                  >
+                    {product.sku || "-"}
+                  </td>
+                  <td
+                    style={{
+                      padding: "1rem",
+                      color: "#475569",
+                    }}
+                  >
+                    {product.category || "-"}
                   </td>
                   <td
                     style={{

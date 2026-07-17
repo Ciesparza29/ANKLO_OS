@@ -15,6 +15,11 @@ export function ProductForm() {
     const parsed = createProductSchema.safeParse({
       name: form.get("name"),
       description: form.get("description") || undefined,
+      sku: form.get("sku") || undefined,
+      externalCode: form.get("externalCode") || undefined,
+      category: form.get("category") || undefined,
+      manufacturer: form.get("manufacturer") || undefined,
+      baseUnit: form.get("baseUnit") || undefined,
     });
 
     if (!parsed.success) {
@@ -114,41 +119,27 @@ export function ProductForm() {
       </fieldset>
 
       <fieldset
-        disabled={true}
+        disabled={busy}
         style={{
           padding: "1.5rem",
-          border: "1px dashed #cbd5e1",
+          border: "1px solid #cbd5e1",
           borderRadius: "8px",
-          backgroundColor: "#f8fafc",
           marginBottom: "2rem",
         }}
       >
         <legend
-          style={{ fontWeight: "bold", padding: "0 8px", color: "#64748b" }}
+          style={{ fontWeight: "bold", padding: "0 8px", color: "#0f172a" }}
         >
           Datos de Referencia y Clasificación
-          <span
-            style={{
-              marginLeft: "8px",
-              fontSize: "0.75rem",
-              backgroundColor: "#e2e8f0",
-              padding: "2px 6px",
-              borderRadius: "4px",
-              textTransform: "uppercase",
-            }}
-          >
-            Próxima Etapa
-          </span>
         </legend>
         <p
           style={{
-            color: "#94a3b8",
+            color: "#64748b",
             fontSize: "0.9rem",
             marginBottom: "1.5rem",
           }}
         >
-          Estos campos estarán disponibles en futuras versiones para
-          trazabilidad de inventario y variantes.
+          Campos opcionales para la clasificación y trazabilidad del producto.
         </p>
 
         <div
@@ -157,7 +148,6 @@ export function ProductForm() {
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
             gap: "1rem",
-            opacity: 0.7,
           }}
         >
           <label
@@ -165,46 +155,63 @@ export function ProductForm() {
           >
             Código Interno / SKU
             <input
+              name="sku"
               type="text"
-              placeholder="No disponible"
-              disabled
+              placeholder="Ej. ADH-500"
+              maxLength={120}
               style={{
                 padding: "0.5rem",
                 borderRadius: "4px",
                 border: "1px solid #cbd5e1",
-                backgroundColor: "#e2e8f0",
               }}
             />
           </label>
           <label
             style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}
           >
-            Categoría / Familia
-            <select
-              disabled
+            Código Externo / Fabricante
+            <input
+              name="externalCode"
+              type="text"
+              placeholder="Ej. REF-X99"
+              maxLength={120}
               style={{
                 padding: "0.5rem",
                 borderRadius: "4px",
                 border: "1px solid #cbd5e1",
-                backgroundColor: "#e2e8f0",
               }}
-            >
-              <option>Seleccionar...</option>
-            </select>
+            />
+          </label>
+          {/* TODO: Estos campos son texto libre temporalmente. En el futuro evolucionarán a un catálogo relacional propio */}
+          <label
+            style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}
+          >
+            Categoría / Familia
+            <input
+              name="category"
+              type="text"
+              placeholder="Ej. Adhesivos"
+              maxLength={100}
+              style={{
+                padding: "0.5rem",
+                borderRadius: "4px",
+                border: "1px solid #cbd5e1",
+              }}
+            />
           </label>
           <label
             style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}
           >
             Fabricante o Marca
             <input
+              name="manufacturer"
               type="text"
-              placeholder="No disponible"
-              disabled
+              placeholder="Ej. Hilti"
+              maxLength={100}
               style={{
                 padding: "0.5rem",
                 borderRadius: "4px",
                 border: "1px solid #cbd5e1",
-                backgroundColor: "#e2e8f0",
               }}
             />
           </label>
@@ -212,17 +219,17 @@ export function ProductForm() {
             style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}
           >
             Unidad de Medida Base
-            <select
-              disabled
+            <input
+              name="baseUnit"
+              type="text"
+              placeholder="Ej. Pieza"
+              maxLength={32}
               style={{
                 padding: "0.5rem",
                 borderRadius: "4px",
                 border: "1px solid #cbd5e1",
-                backgroundColor: "#e2e8f0",
               }}
-            >
-              <option>Seleccionar...</option>
-            </select>
+            />
           </label>
         </div>
       </fieldset>

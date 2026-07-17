@@ -163,6 +163,11 @@ export const createProductSchema = z
   .object({
     name: requiredText(200),
     description: optionalText(1000),
+    sku: optionalText(120),
+    externalCode: optionalText(120),
+    category: optionalText(100),
+    manufacturer: optionalText(100),
+    baseUnit: optionalText(32),
   })
   .strict();
 
@@ -230,6 +235,11 @@ export interface ProductDto {
   readonly organizationId: string;
   readonly name: string;
   readonly description?: string;
+  readonly sku?: string;
+  readonly externalCode?: string;
+  readonly category?: string;
+  readonly manufacturer?: string;
+  readonly baseUnit?: string;
   readonly isActive: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;

@@ -109,6 +109,11 @@ model Product {
   organizationId String   @map("organization_id") @db.Uuid
   name           String   @db.VarChar(200)
   description    String?  @db.VarChar(1000)
+  sku            String?  @db.VarChar(120)
+  externalCode   String?  @map("external_code") @db.VarChar(120)
+  category       String?  @db.VarChar(100)
+  manufacturer   String?  @db.VarChar(100)
+  baseUnit       String?  @map("base_unit") @db.VarChar(32)
   isActive       Boolean  @default(true) @map("is_active")
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
