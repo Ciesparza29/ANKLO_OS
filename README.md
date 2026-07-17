@@ -1,6 +1,9 @@
 # ANKLO-OS — desarrollo
 
-Fundación técnica del ERP ANKLO-OS. Todavía no contiene módulos operativos. La documentación funcional permanece en `ANKLO_Paquete_Documental_v1.0/` y no es sustituida por este README.
+Base temprana del ERP ANKLO-OS con un primer incremento funcional de solicitudes
+manuales de corte: creación, listado, detalle, envío y cancelación. La
+documentación funcional permanece en `ANKLO_Paquete_Documental_v1.0/` y no es
+sustituida por este README.
 
 ## Requisitos
 
@@ -14,7 +17,11 @@ Fundación técnica del ERP ANKLO-OS. Todavía no contiene módulos operativos. 
 pnpm install --frozen-lockfile
 ```
 
-`.env.example` contiene únicamente valores ficticios de desarrollo local. No guardar secretos reales. Para iniciar PostgreSQL y la aplicación, carga sus variables en la misma sesión de shell que ejecutará Next.js:
+`.env.example` contiene únicamente identidades, organización, capacidades,
+credenciales y demás valores ficticios de desarrollo local. Producción falla
+cerrada mientras no exista una integración de identidad real. No guardar
+secretos reales. Para iniciar PostgreSQL y la aplicación, carga sus variables
+en la misma sesión de shell que ejecutará Next.js:
 
 ```bash
 docker compose up -d postgres
@@ -53,7 +60,11 @@ packages/config/    configuración fundacional
 docs/                ADR, arquitectura, decisiones y backlog
 ```
 
-La dirección permitida se define en `AGENTS.md` y se comprueba automáticamente. Prisma no contiene modelos funcionales.
+La dirección permitida se define en `AGENTS.md` y se comprueba automáticamente.
+Prisma contiene el modelo funcional inicial de solicitudes de corte y su
+auditoría. La unidad `MM` configurada para desarrollo es temporal y no constituye
+un catálogo productivo ni una definición aprobada de precisión, conversión o
+redondeo.
 
 ## Flujo de ramas
 

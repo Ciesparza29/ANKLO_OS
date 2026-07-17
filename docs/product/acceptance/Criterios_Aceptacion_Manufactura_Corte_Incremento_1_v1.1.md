@@ -1,6 +1,6 @@
 # Criterios de Aceptación de Manufactura y Corte — Incremento 1
 
-- **Versión:** 1.0
+- **Versión:** 1.1
 - **Estado:** BORRADOR PARA REVISIÓN
 - **Fecha:** 16 de julio de 2026
 - **PRD gobernante:** [PRD ANKLO-OS v1.0](../PRD_ANKLO_OS_v1.0.md)
@@ -11,11 +11,11 @@
 
 ## 1. Alcance y lectura
 
-El documento cubre solicitud, planificación manual determinista, aprobación, asignación de material, propiedad y custodia, ejecución interna o subcontratada, recepción, conciliación, clases de salida, costo básico, estados, auditoría, aislamiento e idempotencia. El optimizador, la programación de máquinas, los costos indirectos no aprobados y la automatización contable permanecen fuera del incremento.
+El documento cubre solicitud, planificación manual determinista, aprobación, asignación de material, propiedad y custodia, ejecución interna o subcontratada, recepción, conciliación, clases de salida, costo básico, estados, auditoría, aislamiento e idempotencia. También formaliza el Incremento 1B, exclusivamente de lectura, para mostrar historial y motivo de cancelación con autorización separada. El optimizador, la programación de máquinas, los costos indirectos no aprobados y la automatización contable permanecen fuera del incremento.
 
-Cada escenario enlaza un requisito del PRD, al menos una decisión `PROD-028`–`PROD-042`, los ADR aplicables y su estado documental:
+Cada escenario enlaza un requisito del PRD, una decisión aplicable (`PROD-028`–`PROD-043`), los ADR pertinentes y su estado documental:
 
-- **Aprobado funcionalmente:** respaldado por una decisión `PROD-028`–`PROD-042` cuyo registro dice **APROBADA**; esa aprobación funcional no equivale a validación jurídica, contractual, contable, tributaria o técnica.
+- **Aprobado funcionalmente:** respaldado por una decisión `PROD-028`–`PROD-043` cuyo registro dice **APROBADA** o **APROBADA FUNCIONALMENTE**; esa aprobación funcional no equivale a validación jurídica, contractual, contable, tributaria o técnica.
 - **Propuesto:** depende de un ADR que conserva estado **PROPUESTO**, especialmente para estados y entidades conceptuales.
 - **Pendiente de configuración/evidencia:** el comportamiento de bloqueo está definido, pero el valor, actor, formato o evidencia real sigue abierto.
 
@@ -245,26 +245,130 @@ Cada escenario enlaza un requisito del PRD, al menos una decisión `PROD-028`–
 - **Cuando** el sistema resuelve la operación válida y almacena o transforma la evidencia,
 - **Entonces** protege el balance sin transacciones abiertas durante llamadas externas y preserva el original aislado, relacionado con derivados y sin atribuir verdad solo por su hash.
 
-## 3. Trazabilidad decisión → ADR → requisito → aceptación
+## 3. Incremento 1B — historial y completitud del detalle
 
-| Decisión   | ADR aplicable                      | Requisito PRD principal    | Criterios principales                   |
-| ---------- | ---------------------------------- | -------------------------- | --------------------------------------- |
-| `PROD-028` | ADR 0007 y ADR 0009 propuesto      | `FR-CUT-003`, `004`        | AC-MC-001, 010, 016                     |
-| `PROD-029` | ADR 0006 y ADR 0009 propuesto      | `FR-CUT-004`, `009`        | AC-MC-001, 018, 019                     |
-| `PROD-030` | ADR 0006 y ADR 0009 propuesto      | `FR-CUT-006`, `009`        | AC-MC-004, 018, 026, 028                |
-| `PROD-031` | ADR 0005 y ADR 0009 propuesto      | `FR-CUT-001`, `006`        | AC-MC-003, 004, 022                     |
-| `PROD-032` | ADR 0003 y ADR 0009 propuesto      | `FR-CUT-004`, `006`        | AC-MC-022                               |
-| `PROD-033` | ADR 0005 y ADR 0009 propuesto      | `FR-CUT-001`, `006`        | AC-MC-003, 022                          |
-| `PROD-034` | ADR 0007 y ADR 0009 propuesto      | `FR-CUT-004`–`007`, `010`  | AC-MC-001, 005, 009, 020, 021, 027, 028 |
-| `PROD-035` | ADR 0005, 0007 y 0009 propuesto    | `FR-CUT-001`, `003`        | AC-MC-010, 015, 028                     |
-| `PROD-036` | ADR 0007 y ADR 0009 propuesto      | `FR-CUT-005`, `008`        | AC-MC-006, 011                          |
-| `PROD-037` | ADR 0005, 0007 y 0009 propuesto    | `FR-CUT-003`, `007`, `008` | AC-MC-010–017, 024, 028                 |
-| `PROD-038` | ADR 0005 y ADR 0009 propuesto      | `FR-CUT-007`, `008`, `010` | AC-MC-013, 017, 021, 025                |
-| `PROD-039` | ADR 0006 y ADR 0009 propuesto      | `FR-CUT-009`               | AC-MC-018, 019, 026                     |
-| `PROD-040` | ADR 0007 y ADR 0009 propuesto      | `FR-CUT-002`, `004`, `005` | AC-MC-001, 006–009, 016                 |
-| `PROD-041` | ADR 0005–0007 y ADR 0009 propuesto | `FR-CUT-001`–`010`         | AC-MC-002–028                           |
-| `PROD-042` | ADR 0009 propuesto                 | `FR-CUT-004`–`010`         | AC-MC-009, 013, 020, 021, 023, 025–027  |
+Los siguientes criterios registran precondición, acción, resultado esperado,
+evidencia y capa de prueba. La aprobación funcional de este alcance por Israel no
+cambia el estado **BORRADOR PARA REVISIÓN** del documento ni el estado
+**PROPUESTO** de los ADR 0007 y 0009.
 
-## 4. Condiciones de uso
+### AC-CUT-1B-001 — Conservar la lectura básica separada
 
-Los escenarios pueden automatizarse con contratos y datos ficticios cuando no dependan de valores reales. Antes de una prueba productiva deben resolverse, según el caso, `LOG-Q-011`, `LOG-Q-012`, `LOG-Q-016`–`LOG-Q-019`, `LOG-Q-021`–`LOG-Q-025`, `LOG-Q-027`, `LOG-Q-028` y `CFG-013`–`CFG-017`. `IMP-Q-016` decide si el incremento pertenece al MVP general; no altera estos criterios. La aceptación de este documento no cambia el estado **BORRADOR** del PRD ni el estado **PROPUESTO** del ADR 0009.
+- **Precondición:** actor de la organización con `cut_request:read` y sin `cut_request:read_history`; solicitud existente.
+- **Acción:** consulta el detalle básico.
+- **Resultado esperado:** recibe cabecera y líneas conforme al Incremento 1A, sin historial ni motivo de cancelación.
+- **Evidencia:** respuesta validada contra contrato mínimo y ausencia comprobada de campos restringidos.
+- **Capa de prueba:** contrato, dominio/API e integración HTTP.
+
+### AC-CUT-1B-002 — Leer historial con ambas capacidades
+
+- **Precondición:** actor de la organización con `cut_request:read` y `cut_request:read_history`; solicitud con eventos.
+- **Acción:** consulta el historial de la solicitud.
+- **Resultado esperado:** recibe únicamente eventos de esa solicitud y organización, con acción, fecha, referencia técnica controlada del actor y motivo permitido.
+- **Evidencia:** respuesta contractual y comparación con eventos persistidos bajo el tenant de prueba.
+- **Capa de prueba:** contrato, dominio, persistencia, API e integración.
+
+### AC-CUT-1B-003 — Mostrar el motivo de cancelación autorizado
+
+- **Precondición:** solicitud `CANCELLED`, evento de cancelación con motivo y actor con ambas capacidades.
+- **Acción:** abre el detalle y su historial.
+- **Resultado esperado:** el motivo aparece asociado al evento de cancelación, sin presentarse como campo de lectura básica.
+- **Evidencia:** prueba de API y comprobación accesible del detalle renderizado.
+- **Capa de prueba:** API, componente/interfaz y prueba de aceptación.
+
+### AC-CUT-1B-004 — Denegar historial sin capacidad específica
+
+- **Precondición:** actor con `cut_request:read` pero sin `cut_request:read_history`.
+- **Acción:** solicita expresamente el recurso o sección protegida de historial.
+- **Resultado esperado:** el servidor deniega el historial sin revelar eventos ni motivo; la lectura básica continúa regida por su propia capacidad.
+- **Evidencia:** respuesta de denegación y aserción de ausencia de datos restringidos.
+- **Capa de prueba:** dominio/autorización y API.
+
+### AC-CUT-1B-005 — No sustituir la capacidad de lectura básica
+
+- **Precondición:** actor con `cut_request:read_history` pero sin `cut_request:read`.
+- **Acción:** intenta consultar el historial de una solicitud.
+- **Resultado esperado:** el servidor rechaza la consulta; `cut_request:read_history` no concede por sí sola acceso a la solicitud.
+- **Evidencia:** prueba negativa de capacidades con respuesta sin datos de negocio.
+- **Capa de prueba:** dominio/autorización y API.
+
+### AC-CUT-1B-006 — Impedir lectura cruzada entre organizaciones
+
+- **Precondición:** actor con ambas capacidades en una organización y solicitud/eventos pertenecientes a otra.
+- **Acción:** intenta consultar detalle o historial por identificador.
+- **Resultado esperado:** no obtiene la solicitud, eventos, motivo ni indicios que permitan confirmar su existencia.
+- **Evidencia:** prueba de integración con tenants distintos y RLS activa.
+- **Capa de prueba:** persistencia PostgreSQL/RLS, servicio y API.
+
+### AC-CUT-1B-007 — Presentar al actor como referencia técnica
+
+- **Precondición:** historial autorizado con una referencia técnica del actor ya persistida y sin identidad humana verificada disponible.
+- **Acción:** el sistema construye y muestra el historial.
+- **Resultado esperado:** proyecta desde esa referencia una `actorReference` controlada y secundaria; no inventa nombres, no la enriquece con una identidad inexistente, no la presenta como autor humano confirmado y no usa el UUID completo como elemento principal.
+- **Evidencia:** contrato de salida y comprobación del texto/etiqueta en interfaz.
+- **Capa de prueba:** contrato, API y componente/interfaz.
+
+### AC-CUT-1B-008 — Minimizar snapshots de auditoría
+
+- **Precondición:** eventos con `before` y `after` completos en `AuditEvent`.
+- **Acción:** un actor autorizado consulta el historial.
+- **Resultado esperado:** la respuesta no incluye snapshots completos ni campos internos ajenos a acción, fecha, referencia técnica y motivo permitido.
+- **Evidencia:** prueba estricta del esquema de salida y aserción negativa sobre `before`/`after`.
+- **Capa de prueba:** contrato, persistencia-adaptador y API.
+
+### AC-CUT-1B-009 — Mantener orden estable del historial
+
+- **Precondición:** solicitud con varios eventos, incluso con marcas de tiempo iguales en un caso controlado.
+- **Acción:** consulta repetidamente el historial.
+- **Resultado esperado:** recibe un orden cronológico estable con desempate determinista y sin duplicados.
+- **Evidencia:** secuencia de identificadores/eventos idéntica en consultas repetidas.
+- **Capa de prueba:** persistencia e integración API.
+
+### AC-CUT-1B-010 — Limitar acciones visibles sin derivar estados
+
+- **Precondición:** solicitudes de prueba con eventos de creación, envío o cancelación del Incremento 1A.
+- **Acción:** consulta sus historiales.
+- **Resultado esperado:** el historial público se limita a `CUT_REQUEST_CREATED`, `CUT_REQUEST_SUBMITTED` y `CUT_REQUEST_CANCELLED`; su DTO no incluye un estado derivado de `before` o `after`, y no expone ni usa esos snapshots para reconstruir campos no autorizados. El modelo de solicitudes conserva únicamente `DRAFT`, `SUBMITTED` y `CANCELLED`; el Incremento 1B no agrega estados ni transiciones.
+- **Evidencia:** casos parametrizados contra la allowlist de acciones, esquema público estricto y comprobación estática de los estados y transiciones vigentes.
+- **Capa de prueba:** contrato, dominio, persistencia-adaptador y API.
+
+### AC-CUT-1B-011 — Mantener la consulta sin efectos
+
+- **Precondición:** solicitud e historial persistidos con versión y conteos conocidos.
+- **Acción:** se consultan detalle e historial una o varias veces.
+- **Resultado esperado:** no cambia versión o estado, no crea comandos, operaciones ni eventos de auditoría y no produce efectos de inventario.
+- **Evidencia:** comparación de registros y conteos antes/después de la lectura.
+- **Capa de prueba:** dominio, persistencia e integración.
+
+### AC-CUT-1B-012 — Implementar sin migración ni cambio semántico
+
+- **Precondición:** esquema del Incremento 1A con `AuditEvent` que ya contiene los datos requeridos.
+- **Acción:** se verifica el cambio previsto de contratos, lectura, autorización, API, interfaz y pruebas.
+- **Resultado esperado:** no se modifica Prisma ni se genera migración; `MM`, prioridad y `requiredAt` conservan su carácter/semántica actuales y no se incorpora `committedAt`.
+- **Evidencia:** diff de implementación futuro, validación de esquema y ausencia de archivos de migración nuevos.
+- **Capa de prueba:** arquitectura, revisión estática y aceptación documental/técnica.
+
+## 4. Trazabilidad decisión → ADR → requisito → aceptación
+
+| Decisión   | ADR aplicable                      | Requisito PRD principal           | Criterios principales                   |
+| ---------- | ---------------------------------- | --------------------------------- | --------------------------------------- |
+| `PROD-028` | ADR 0007 y ADR 0009 propuesto      | `FR-CUT-003`, `004`               | AC-MC-001, 010, 016                     |
+| `PROD-029` | ADR 0006 y ADR 0009 propuesto      | `FR-CUT-004`, `009`               | AC-MC-001, 018, 019                     |
+| `PROD-030` | ADR 0006 y ADR 0009 propuesto      | `FR-CUT-006`, `009`               | AC-MC-004, 018, 026, 028                |
+| `PROD-031` | ADR 0005 y ADR 0009 propuesto      | `FR-CUT-001`, `006`               | AC-MC-003, 004, 022                     |
+| `PROD-032` | ADR 0003 y ADR 0009 propuesto      | `FR-CUT-004`, `006`               | AC-MC-022                               |
+| `PROD-033` | ADR 0005 y ADR 0009 propuesto      | `FR-CUT-001`, `006`               | AC-MC-003, 022                          |
+| `PROD-034` | ADR 0007 y ADR 0009 propuesto      | `FR-CUT-004`–`007`, `010`         | AC-MC-001, 005, 009, 020, 021, 027, 028 |
+| `PROD-035` | ADR 0005, 0007 y 0009 propuesto    | `FR-CUT-001`, `003`               | AC-MC-010, 015, 028                     |
+| `PROD-036` | ADR 0007 y ADR 0009 propuesto      | `FR-CUT-005`, `008`               | AC-MC-006, 011                          |
+| `PROD-037` | ADR 0005, 0007 y 0009 propuesto    | `FR-CUT-003`, `007`, `008`        | AC-MC-010–017, 024, 028                 |
+| `PROD-038` | ADR 0005 y ADR 0009 propuesto      | `FR-CUT-007`, `008`, `010`        | AC-MC-013, 017, 021, 025                |
+| `PROD-039` | ADR 0006 y ADR 0009 propuesto      | `FR-CUT-009`                      | AC-MC-018, 019, 026                     |
+| `PROD-040` | ADR 0007 y ADR 0009 propuesto      | `FR-CUT-002`, `004`, `005`        | AC-MC-001, 006–009, 016                 |
+| `PROD-041` | ADR 0005–0007 y ADR 0009 propuesto | `FR-CUT-001`–`010`                | AC-MC-002–028                           |
+| `PROD-042` | ADR 0009 propuesto                 | `FR-CUT-004`–`010`                | AC-MC-009, 013, 020, 021, 023, 025–027  |
+| `PROD-043` | ADR 0001, 0003 y 0009 propuesto    | `FR-CUT-004`, `010`; `FR-AUD-001` | AC-CUT-1B-001–012                       |
+
+## 5. Condiciones de uso
+
+Los escenarios pueden automatizarse con contratos y datos ficticios cuando no dependan de valores reales. Antes de una prueba productiva deben resolverse, según el caso, `LOG-Q-011`, `LOG-Q-012`, `LOG-Q-016`–`LOG-Q-019`, `LOG-Q-021`–`LOG-Q-025`, `LOG-Q-027`, `LOG-Q-028` y `CFG-013`–`CFG-017`. `IMP-Q-016` decide si el incremento pertenece al MVP general; no altera estos criterios. La aceptación de este documento no cambia el estado **BORRADOR** del PRD ni el estado **PROPUESTO** del ADR 0009. Para el Incremento 1B, producción continúa bloqueada sin identidad real; `actorReference` permanece como referencia técnica y no como identidad humana verificada.
