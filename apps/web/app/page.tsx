@@ -1,10 +1,18 @@
 export default function Home() {
   return (
     <main>
-      <p className="eyebrow">Fundación técnica</p>
+      <p className="eyebrow">Operación controlada</p>
       <h1>ANKLO-OS</h1>
-      <p>La base de ingeniería está activa.</p>
-      <aside>Este sistema aún no contiene módulos operativos.</aside>
+      <p>Incremento 1A de manufactura y corte.</p>
+      <p>
+        <a className="button" href="/cut-requests">
+          Abrir solicitudes de corte
+        </a>
+      </p>
+      <aside>
+        Esta entrega registra solicitudes. No planifica, reserva ni mueve
+        inventario.
+      </aside>
     </main>
   );
 }

@@ -3,11 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
+    "db:generate": "prisma generate",
     "db:validate": "prisma validate"
   },
   "dependencies": {
-    "@prisma/client": "7.8.0"
+    "@anklo/contracts": "workspace:*",
+    "@anklo/domain": "workspace:*",
+    "@prisma/adapter-pg": "7.8.0",
+    "@prisma/client": "7.8.0",
+    "pg": "8.16.3"
   },
   "devDependencies": {
     "prisma": "7.8.0"
