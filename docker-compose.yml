@@ -1,8 +1,10 @@
 services:
   postgres:
     image: postgres:17.6-alpine
-    env_file:
-      - .env.example
+    environment:
+      POSTGRES_DB: anklo_os
+      POSTGRES_USER: anklo
+      POSTGRES_PASSWORD: local-development-only
     ports:
       - "5432:5432"
     volumes:

@@ -14,9 +14,10 @@
     "deps:check": "pnpm peers check",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
+    "db:generate": "pnpm --filter @anklo/db db:generate",
     "db:validate": "pnpm --filter @anklo/db db:validate",
-    "build": "pnpm --filter @anklo/web build",
-    "verify": "pnpm format:check && pnpm lint && pnpm arch:check && pnpm deps:check && pnpm typecheck && pnpm test && pnpm db:validate && pnpm build"
+    "build": "pnpm db:generate && pnpm --filter @anklo/web build",
+    "verify": "pnpm format:check && pnpm lint && pnpm arch:check && pnpm deps:check && pnpm db:generate && pnpm typecheck && pnpm test && pnpm db:validate && pnpm build"
   },
   "devDependencies": {
     "@eslint/js": "9.39.4",
