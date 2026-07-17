@@ -23,13 +23,22 @@ export const CUT_EXECUTION_MODES = ["INTERNAL", "EXTERNAL"] as const;
 export const CUT_REQUEST_CAPABILITIES = [
   "cut_request:create",
   "cut_request:read",
+  "cut_request:read_history",
   "cut_request:submit",
   "cut_request:cancel",
+] as const;
+export const CUT_REQUEST_HISTORY_ACTIONS = [
+  "CUT_REQUEST_CREATED",
+  "CUT_REQUEST_SUBMITTED",
+  "CUT_REQUEST_CANCELLED",
 ] as const;
 
 export const cutRequestStatusSchema = z.enum(CUT_REQUEST_STATUSES);
 export const cutExecutionModeSchema = z.enum(CUT_EXECUTION_MODES);
 export const cutRequestCapabilitySchema = z.enum(CUT_REQUEST_CAPABILITIES);
+export const cutRequestHistoryActionSchema = z.enum(
+  CUT_REQUEST_HISTORY_ACTIONS,
+);
 
 const requiredText = (max: number) => z.string().trim().min(1).max(max);
 const optionalText = (max: number) => z.string().trim().max(max).optional();
@@ -114,9 +123,50 @@ export const cancelCutRequestSchema = z
 
 export const cutRequestIdSchema = z.uuid();
 
+const cutRequestHistoryBase = {
+  id: z.uuid(),
+  occurredAt: z.iso.datetime(),
+  actorReference: z.uuid(),
+};
+
+export const cutRequestHistoryEntrySchema = z.discriminatedUnion("action", [
+  z
+    .object({
+      ...cutRequestHistoryBase,
+      action: z.literal("CUT_REQUEST_CREATED"),
+    })
+    .strict(),
+  z
+    .object({
+      ...cutRequestHistoryBase,
+      action: z.literal("CUT_REQUEST_SUBMITTED"),
+    })
+    .strict(),
+  z
+    .object({
+      ...cutRequestHistoryBase,
+      action: z.literal("CUT_REQUEST_CANCELLED"),
+      reason: requiredText(500),
+    })
+    .strict(),
+]);
+
+export const cutRequestHistoryResponseSchema = z
+  .object({ history: z.array(cutRequestHistoryEntrySchema) })
+  .strict();
+
 export type CutRequestStatus = z.infer<typeof cutRequestStatusSchema>;
 export type CutExecutionMode = z.infer<typeof cutExecutionModeSchema>;
 export type CutRequestCapability = z.infer<typeof cutRequestCapabilitySchema>;
+export type CutRequestHistoryAction = z.infer<
+  typeof cutRequestHistoryActionSchema
+>;
+export type CutRequestHistoryEntryDto = z.infer<
+  typeof cutRequestHistoryEntrySchema
+>;
+export type CutRequestHistoryResponse = z.infer<
+  typeof cutRequestHistoryResponseSchema
+>;
 export type CutRequestLineInput = z.infer<typeof cutRequestLineInputSchema>;
 export type CreateCutRequestInput = z.infer<typeof createCutRequestSchema>;
 export type CutRequestListQuery = z.infer<typeof cutRequestListQuerySchema>;

@@ -3,13 +3,18 @@ import type {
   CreateCutRequestInput,
   CutRequestCapability,
   CutRequestDto,
+  CutRequestHistoryEntryDto,
   CutRequestListQuery,
+  CutRequestHistoryAction,
   SubmitCutRequestInput,
 } from "@anklo/contracts";
-import { CutRequest, type CutRequestState } from "./cut-request";
+import {
+  CutRequest,
+  CutRequestDomainError,
+  type CutRequestState,
+} from "./cut-request";
 
-export type CutRequestAction =
-  "CUT_REQUEST_CREATED" | "CUT_REQUEST_SUBMITTED" | "CUT_REQUEST_CANCELLED";
+export type CutRequestAction = CutRequestHistoryAction;
 
 export interface ActorContext {
   readonly actorId: string;
@@ -52,6 +57,10 @@ export interface CutRequestStore {
     organizationId: string,
     query: CutRequestListQuery,
   ): Promise<readonly CutRequestState[]>;
+  listHistory(
+    organizationId: string,
+    requestId: string,
+  ): Promise<readonly CutRequestHistoryEntryDto[]>;
   findOperationResult(
     organizationId: string,
     clientOperationId: string,
@@ -145,6 +154,26 @@ export class CutRequestService {
   async get(actor: ActorContext, requestId: string): Promise<CutRequestDto> {
     requireCapability(actor, "cut_request:read");
     return this.load(actor.organizationId, requestId);
+  }
+
+  async getHistory(
+    actor: ActorContext,
+    requestId: string,
+  ): Promise<readonly CutRequestHistoryEntryDto[]> {
+    requireCapability(actor, "cut_request:read");
+    requireCapability(actor, "cut_request:read_history");
+    await this.load(actor.organizationId, requestId);
+    const history = await this.dependencies.store.listHistory(
+      actor.organizationId,
+      requestId,
+    );
+    if (history.length === 0) {
+      throw new CutRequestDomainError(
+        "HISTORY_INCONSISTENT",
+        "La solicitud no conserva su evento de creación",
+      );
+    }
+    return history;
   }
 
   async submit(

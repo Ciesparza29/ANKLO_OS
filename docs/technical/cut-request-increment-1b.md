@@ -1,6 +1,6 @@
 # Nota técnica — Incremento 1B: trazabilidad visible y completitud del detalle
 
-**Estado:** propuesta técnica para revisión de Israel
+**Estado:** implementado, pendiente de revisión de Israel
 **Tipo de incremento:** lectura y visualización exclusivamente
 **Dependencia:** Incremento 1A de solicitudes manuales de corte
 
@@ -236,5 +236,62 @@ Los criterios gobernantes son `AC-CUT-1B-001`–`AC-CUT-1B-012`.
 - No se agregan estados, transiciones, comandos o efectos operativos.
 - No se modifica Prisma ni se crea migración.
 - Producción sigue fallando cerrada mientras falte identidad real.
-- Documentación, pruebas y verificación del repositorio quedan actualizadas en el
-  futuro incremento de implementación.
+- Documentación, pruebas y verificación del repositorio quedan actualizadas con
+  esta implementación.
+
+## 18. Implementación realizada
+
+La implementación conserva la arquitectura del Incremento 1A y se distribuye de
+la siguiente forma:
+
+- `packages/contracts/src/index.ts` incorpora
+  `cut_request:read_history`, la allowlist de tres acciones y los esquemas Zod
+  estrictos para entrada y respuesta de historial.
+- `packages/domain/src/cut-request-service.ts` amplía el puerto de solicitudes y
+  exige conjuntamente `cut_request:read` y `cut_request:read_history`. Una
+  solicitud válida sin eventos produce `HISTORY_INCONSISTENT`, que utiliza el
+  tratamiento HTTP controlado ya existente para errores de dominio.
+- `packages/db/src/prisma-cut-request-store.ts` consulta `AuditEvent` bajo el
+  tenant activo, filtra explícitamente organización, tipo e identificador de
+  solicitud, selecciona solo campos autorizados y ordena ascendentemente por
+  `occurred_at` con `id` ascendente como desempate.
+- `apps/web/app/api/cut-requests/[id]/history/route.ts` expone el recurso de solo
+  lectura, valida identificador y respuesta, y no modifica el endpoint básico.
+- `apps/web/app/cut-requests/[id]/cut-request-history.tsx` presenta una línea
+  temporal semántica con acción, fecha, referencia técnica secundaria y motivo
+  solo para cancelación. La pantalla cubre carga, error, vacío y éxito; oculta la
+  sección cuando el servidor deniega la capacidad específica.
+- `apps/web/app/cut-requests/[id]/request-detail.tsx` integra la consulta sin
+  alterar los comandos existentes y `apps/web/app/styles.css` añade únicamente
+  la presentación de la línea temporal.
+- `.env.example` habilita la capacidad únicamente en el contexto ficticio de
+  desarrollo y declara que no representa una asignación productiva.
+
+El DTO público contiene `id`, `action`, `occurredAt`, `actorReference` y, solo
+para `CUT_REQUEST_CANCELLED`, `reason`. No contiene estado, organización,
+correlación, `before`, `after` ni snapshots. `actorReference` conserva el UUID
+técnico persistido sin transformaciones irreversibles y la interfaz lo rotula
+como referencia técnica, no como nombre o identidad humana verificada.
+
+Las pruebas añadidas cubren contratos estrictos, capacidades parciales,
+aislamiento, minimización, orden estable con timestamps iguales, cancelación,
+lecturas repetidas sin efectos, inconsistencia sin eventos, API y renderizado
+accesible. La integración PostgreSQL se verificó además con una cuenta local
+ficticia sin `SUPERUSER` ni `BYPASSRLS`.
+
+Los archivos de prueba son
+`packages/contracts/src/cut-request-history.test.ts`,
+`packages/domain/src/cut-request-service.test.ts`,
+`packages/db/src/prisma-cut-request-store.integration.test.ts`,
+`apps/web/app/api/cut-requests/route.test.ts`,
+`apps/web/app/cut-requests/[id]/cut-request-history.test.ts` y
+`apps/web/lib/cut-request-context.test.ts`.
+
+La evidencia de cierre incluye `pnpm verify` satisfactorio —formato, lint,
+arquitectura, dependencias, generación, tipos, pruebas, validación Prisma y
+build— y la batería completa de 59 pruebas ejecutada contra PostgreSQL con la
+cuenta RLS ficticia sin privilegios de bypass.
+
+No se modificaron `schema.prisma`, migraciones, enums, tablas, columnas o
+índices. Tampoco se añadieron dependencias, estados, transiciones, comandos ni
+efectos operativos.

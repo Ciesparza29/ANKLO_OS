@@ -1,8 +1,17 @@
 "use client";
 
-import type { CutRequestDto } from "@anklo/contracts";
+import type {
+  CutRequestDto,
+  CutRequestHistoryResponse,
+} from "@anklo/contracts";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import {
+  CutRequestHistory,
+  type CutRequestHistoryViewState,
+} from "./cut-request-history";
+
+type HistoryState = CutRequestHistoryViewState | { readonly status: "hidden" };
 
 export function CutRequestDetail() {
   const { id } = useParams<{ id: string }>();
@@ -11,6 +20,9 @@ export function CutRequestDetail() {
   const [busy, setBusy] = useState(false);
   const [showCancellation, setShowCancellation] = useState(false);
   const [cancellationReason, setCancellationReason] = useState("");
+  const [historyState, setHistoryState] = useState<HistoryState>({
+    status: "loading",
+  });
   useEffect(() => {
     const controller = new AbortController();
     fetch(`/api/cut-requests/${id}`, { signal: controller.signal })
@@ -31,6 +43,29 @@ export function CutRequestDetail() {
               reason instanceof Error ? reason.message : "Error inesperado",
             ),
       );
+    fetch(`/api/cut-requests/${id}/history`, { signal: controller.signal })
+      .then(async (response) => {
+        if (response.status === 403) {
+          setHistoryState({ status: "hidden" });
+          return null;
+        }
+        if (!response.ok) {
+          throw new Error("No fue posible cargar el historial");
+        }
+        return (await response.json()) as CutRequestHistoryResponse;
+      })
+      .then((body) => {
+        if (body) setHistoryState({ status: "ready", history: body.history });
+      })
+      .catch((reason: unknown) => {
+        if ((reason as { name?: string }).name !== "AbortError") {
+          setHistoryState({
+            status: "error",
+            message:
+              reason instanceof Error ? reason.message : "Error inesperado",
+          });
+        }
+      });
     return () => controller.abort();
   }, [id]);
 
@@ -142,6 +177,9 @@ export function CutRequestDetail() {
           </tbody>
         </table>
       </div>
+      {historyState.status !== "hidden" && (
+        <CutRequestHistory state={historyState} />
+      )}
       {request.status === "DRAFT" ? (
         <>
           <div className="actions">

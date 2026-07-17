@@ -1,4 +1,8 @@
-import type { CutRequestListQuery } from "@anklo/contracts";
+import {
+  CUT_REQUEST_HISTORY_ACTIONS,
+  type CutRequestHistoryEntryDto,
+  type CutRequestListQuery,
+} from "@anklo/contracts";
 import {
   CutRequestDomainError,
   type AtomicCreateInput,
@@ -152,6 +156,54 @@ export class PrismaCutRequestStore implements CutRequestStore {
         take: 200,
       });
       return (records as RequestWithLines[]).map(toState);
+    });
+  }
+
+  async listHistory(
+    organizationId: string,
+    requestId: string,
+  ): Promise<readonly CutRequestHistoryEntryDto[]> {
+    return this.withTenant(organizationId, async (transaction) => {
+      const records = await transaction.auditEvent.findMany({
+        where: {
+          organizationId,
+          entityType: "CUT_REQUEST",
+          entityId: requestId,
+          action: { in: [...CUT_REQUEST_HISTORY_ACTIONS] },
+        },
+        select: {
+          id: true,
+          action: true,
+          occurredAt: true,
+          actorId: true,
+          reason: true,
+        },
+        orderBy: [{ occurredAt: "asc" }, { id: "asc" }],
+      });
+      return records.map((record): CutRequestHistoryEntryDto => {
+        const base = {
+          id: record.id,
+          occurredAt: record.occurredAt.toISOString(),
+          actorReference: record.actorId,
+        };
+        if (record.action === "CUT_REQUEST_CREATED") {
+          return { ...base, action: "CUT_REQUEST_CREATED" };
+        }
+        if (record.action === "CUT_REQUEST_SUBMITTED") {
+          return { ...base, action: "CUT_REQUEST_SUBMITTED" };
+        }
+        if (!record.reason?.trim()) {
+          throw new CutRequestDomainError(
+            "HISTORY_INCONSISTENT",
+            "El evento de cancelación no conserva un motivo válido",
+          );
+        }
+        return {
+          ...base,
+          action: "CUT_REQUEST_CANCELLED",
+          reason: record.reason,
+        };
+      });
     });
   }
 
