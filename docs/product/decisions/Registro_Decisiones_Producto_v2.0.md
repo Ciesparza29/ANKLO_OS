@@ -661,6 +661,21 @@ Fuentes relacionadas:
 - **Requisitos derivados:** criterios de transición, autoridad y casos negativos.
 - **Criterio de revisión futura:** revisar con taller, inventario, compras y contabilidad.
 
+### PROD-043 — Incremento 1B de trazabilidad visible en solicitudes de corte
+
+- **Estado:** APROBADA FUNCIONALMENTE
+- **Fecha:** 16 de julio de 2026
+- **Alcance:** lectura y visualización del historial y motivo de cancelación de solicitudes de corte del Incremento 1A.
+- **Decisión:** formalizar el “Incremento 1B — trazabilidad visible y completitud del detalle de solicitudes de corte” como alcance exclusivamente informativo. `cut_request:read` permite leer la solicitud; la capacidad separada `cut_request:read_history` permite leer historial y motivo de cancelación y no sustituye ni es concedida automáticamente por la lectura básica. Para consultar historial se requieren ambas capacidades. El actor se expone, cuando corresponda, mediante `actorReference` controlada: es una referencia técnica, no identidad humana verificada; no se inventan nombres ni se presenta el UUID completo como elemento principal. No se exponen snapshots `before`/`after` completos. No se agregan estados, transiciones ni comandos de escritura. La inspección confirma que `AuditEvent` ya contiene los datos necesarios, por lo que no se prevé migración. Producción continúa bloqueada sin identidad real.
+- **Justificación:** el Incremento 1A conserva la auditoría y el motivo de cancelación, pero el detalle no los muestra; una lectura mínima y autorizada completa la trazabilidad visible sin ampliar el proceso operativo.
+- **Consecuencias:** se deberán diseñar contratos de salida mínimos, puerto y consulta de historial, autorización, API, interfaz y pruebas; aislamiento organizacional, RLS y append-only permanecen invariantes.
+- **Excepciones:** no incluye revisión, aprobación, rechazo, bloqueo, reapertura, asignación, planificación, ejecución u optimización. El Incremento 1B no produce efectos físicos; no crea reservas ni movimientos de inventario; no cambia propiedad ni custodia física; no genera productos terminados, remanentes, merma o residuos; no produce efectos contables; no registra costos ni valoración; y no ejecuta integración con Migo. `MM` sigue como configuración temporal, prioridad como texto y `requiredAt` conserva su significado; no se agrega `committedAt` ni se definen precisión, escala, conversión o redondeo.
+- **Responsable o aprobador:** decisión funcional de Israel. La aprobación formal de los documentos actualizados permanece pendiente de su revisión; no cambia el estado **PROPUESTO** de los ADR 0007 y 0009 ni el estado **BORRADOR** del PRD.
+- **Fuente:** instrucción funcional de Israel para formalizar el Incremento 1B, recibida el 16 de julio de 2026.
+- **Documentos afectados:** README, PRD, criterios de aceptación del Incremento 1, nota técnica 1B y backlog canónico.
+- **Requisitos derivados:** capacidades separadas, minimización del historial, referencia técnica del actor, autorización en servidor, aislamiento por organización, pruebas negativas y ausencia de migración prevista.
+- **Criterio de revisión futura:** revisar al integrar identidad productiva o si aparece una necesidad de persistencia no cubierta; cualquier ampliación requiere decisión documental previa.
+
 ## 3. Trazabilidad y revisión
 
 Este registro deberá revisarse antes de redactar cada ADR y antes de publicar el Bosquejo v2.0. Una revisión futura no modifica silenciosamente decisiones anteriores: crea una nueva versión y marca la decisión afectada como `SUPERADA`, indicando el identificador sustituto.

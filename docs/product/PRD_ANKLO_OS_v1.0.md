@@ -222,30 +222,32 @@ La inclusión en la visión no implica inclusión en el MVP; la clasificación v
 
 ## 13. Matriz provisional de capacidades
 
-| Acción                       | Capacidad necesaria             | Actor conocido                        | Autoridad ratificada            | Pendiente                        | Segregación requerida                                   |
-| ---------------------------- | ------------------------------- | ------------------------------------- | ------------------------------- | -------------------------------- | ------------------------------------------------------- |
-| Cambiar `ActingContext`      | Seleccionar contexto autorizado | Usuario autenticado                   | Regla funcional provisional     | Matriz de alcances reales        | Cambio no eleva privilegios.                            |
-| Consultar consolidado        | Consulta de grupo               | Dueño o usuario autorizado            | Necesidad funcional provisional | Asignación y finalidad           | Separar administración técnica de acceso.               |
-| Preparar cotización          | Crear revisión                  | Vendedor/actor comercial              | Capacidad funcional             | Alcances de envío                | No implica aprobar precio.                              |
-| Aprobar precio               | Aprobar versión exacta          | Dueño                                 | Confirmado funcionalmente       | Ratificación documental          | Preparador no se autoaprueba sin autoridad.             |
-| Aprobar precio delegado      | Delegación temporal             | Persona delegada                      | Excepción funcional             | Límites y vigencia               | Delegación auditable y revocable.                       |
-| Acceder a costos             | Ver dato restringido            | Dueño                                 | Confirmado funcionalmente       | Cualquier acceso adicional       | No se presume por cargo.                                |
-| Definir precisión ATP        | Aprobar política comercial      | Por asignar                           | No ratificada                   | Política y autoridad             | Administrador técnico solo configura.                   |
-| Registrar `SupplierOffer`    | Registrar oferta                | Actor comercial/abastecimiento        | No ratificada                   | Rol y contexto                   | Registrar no aprueba.                                   |
-| Importar snapshot            | Ejecutar importación permitida  | Actor autorizado                      | Capacidad, no cargo             | Canal y matriz                   | Importador no aprueba ajustes.                          |
-| Contar inventario            | Registrar observación           | Actor autorizado                      | Capacidad, no cargo             | Matriz                           | Separar de validación sensible.                         |
-| Validar conteo               | Validar sesión/evidencia        | Por asignar                           | No ratificada                   | Matriz                           | No aprobar ajuste propio sensible.                      |
-| Aprobar ajuste               | Autorizar movimiento correctivo | Por asignar                           | No ratificada                   | Materialidad y matriz            | Creador y aprobador distintos salvo excepción auditada. |
-| Cerrar conciliación          | Resolver/cerrar                 | Por asignar                           | No ratificada                   | Regla exacta/material            | Diferencias materiales escalan.                         |
-| Solicitar manufactura/corte  | Crear solicitud trazable        | Solicitante autorizado                | Regla funcional provisional     | Usuarios y alcances reales       | Solicitar no planifica, ejecuta ni aprueba.             |
-| Preparar plan manual         | Planificar entradas y salidas   | Planificador autorizado               | Regla funcional provisional     | Matriz y parámetros medidos      | Preparador no libera su plan sin capacidad adicional.   |
-| Aprobar plan de corte        | Liberar plan                    | Por asignar                           | No ratificada                   | Matriz de taller                 | Aprobación no equivale a ejecución.                     |
-| Asignar material/custodia    | Entregar material al proceso    | Custodio autorizado                   | Regla funcional provisional     | Matriz y evidencia de entrega    | No cambia propiedad ni confirma consumo.                |
-| Registrar ejecución          | Confirmar hechos físicos        | Ejecutor interno o externo autorizado | Regla funcional provisional     | Usuarios, tolerancias y formatos | No modifica el plan aprobado.                           |
-| Recibir resultados           | Confirmar recepción             | Receptor autorizado                   | Regla funcional provisional     | Matriz y criterios medidos       | Recepción no equivale a conciliación.                   |
-| Cerrar conciliación de corte | Resolver balance y diferencias  | Por asignar                           | No ratificada                   | Umbrales, autoridad y Migo       | Merma extraordinaria y cierre exigen segregación.       |
-| Clasificar entrega externa   | Aprobar modalidad               | Por asignar                           | No ratificada                   | Acuerdo, propiedad y documentos  | Registro físico separado de clasificación.              |
-| Decidir técnicamente en obra | Aprobar cambio técnico          | Autoridad competente externa/interna  | Depende de fuentes aplicables   | Matriz por contrato              | Supervisor no rediseña.                                 |
+| Acción                       | Capacidad necesaria             | Actor conocido                        | Autoridad ratificada            | Pendiente                         | Segregación requerida                                                 |
+| ---------------------------- | ------------------------------- | ------------------------------------- | ------------------------------- | --------------------------------- | --------------------------------------------------------------------- |
+| Cambiar `ActingContext`      | Seleccionar contexto autorizado | Usuario autenticado                   | Regla funcional provisional     | Matriz de alcances reales         | Cambio no eleva privilegios.                                          |
+| Consultar consolidado        | Consulta de grupo               | Dueño o usuario autorizado            | Necesidad funcional provisional | Asignación y finalidad            | Separar administración técnica de acceso.                             |
+| Preparar cotización          | Crear revisión                  | Vendedor/actor comercial              | Capacidad funcional             | Alcances de envío                 | No implica aprobar precio.                                            |
+| Aprobar precio               | Aprobar versión exacta          | Dueño                                 | Confirmado funcionalmente       | Ratificación documental           | Preparador no se autoaprueba sin autoridad.                           |
+| Aprobar precio delegado      | Delegación temporal             | Persona delegada                      | Excepción funcional             | Límites y vigencia                | Delegación auditable y revocable.                                     |
+| Acceder a costos             | Ver dato restringido            | Dueño                                 | Confirmado funcionalmente       | Cualquier acceso adicional        | No se presume por cargo.                                              |
+| Definir precisión ATP        | Aprobar política comercial      | Por asignar                           | No ratificada                   | Política y autoridad              | Administrador técnico solo configura.                                 |
+| Registrar `SupplierOffer`    | Registrar oferta                | Actor comercial/abastecimiento        | No ratificada                   | Rol y contexto                    | Registrar no aprueba.                                                 |
+| Importar snapshot            | Ejecutar importación permitida  | Actor autorizado                      | Capacidad, no cargo             | Canal y matriz                    | Importador no aprueba ajustes.                                        |
+| Contar inventario            | Registrar observación           | Actor autorizado                      | Capacidad, no cargo             | Matriz                            | Separar de validación sensible.                                       |
+| Validar conteo               | Validar sesión/evidencia        | Por asignar                           | No ratificada                   | Matriz                            | No aprobar ajuste propio sensible.                                    |
+| Aprobar ajuste               | Autorizar movimiento correctivo | Por asignar                           | No ratificada                   | Materialidad y matriz             | Creador y aprobador distintos salvo excepción auditada.               |
+| Cerrar conciliación          | Resolver/cerrar                 | Por asignar                           | No ratificada                   | Regla exacta/material             | Diferencias materiales escalan.                                       |
+| Solicitar manufactura/corte  | Crear solicitud trazable        | Solicitante autorizado                | Regla funcional provisional     | Usuarios y alcances reales        | Solicitar no planifica, ejecuta ni aprueba.                           |
+| Leer solicitud de corte      | `cut_request:read`              | Actor autorizado                      | Aprobación funcional de Israel  | Identidades y asignaciones reales | No concede acceso al historial ni al motivo de cancelación.           |
+| Leer historial de corte      | `cut_request:read_history`      | Actor autorizado                      | Aprobación funcional de Israel  | Identidades y asignaciones reales | Requiere además acceso a la solicitud; no expone snapshots completos. |
+| Preparar plan manual         | Planificar entradas y salidas   | Planificador autorizado               | Regla funcional provisional     | Matriz y parámetros medidos       | Preparador no libera su plan sin capacidad adicional.                 |
+| Aprobar plan de corte        | Liberar plan                    | Por asignar                           | No ratificada                   | Matriz de taller                  | Aprobación no equivale a ejecución.                                   |
+| Asignar material/custodia    | Entregar material al proceso    | Custodio autorizado                   | Regla funcional provisional     | Matriz y evidencia de entrega     | No cambia propiedad ni confirma consumo.                              |
+| Registrar ejecución          | Confirmar hechos físicos        | Ejecutor interno o externo autorizado | Regla funcional provisional     | Usuarios, tolerancias y formatos  | No modifica el plan aprobado.                                         |
+| Recibir resultados           | Confirmar recepción             | Receptor autorizado                   | Regla funcional provisional     | Matriz y criterios medidos        | Recepción no equivale a conciliación.                                 |
+| Cerrar conciliación de corte | Resolver balance y diferencias  | Por asignar                           | No ratificada                   | Umbrales, autoridad y Migo        | Merma extraordinaria y cierre exigen segregación.                     |
+| Clasificar entrega externa   | Aprobar modalidad               | Por asignar                           | No ratificada                   | Acuerdo, propiedad y documentos   | Registro físico separado de clasificación.                            |
+| Decidir técnicamente en obra | Aprobar cambio técnico          | Autoridad competente externa/interna  | Depende de fuentes aplicables   | Matriz por contrato               | Supervisor no rediseña.                                               |
 
 ## 14. Flujos de negocio
 
@@ -1063,7 +1065,73 @@ Este incremento se especifica como entrega separada y controlada; no resuelve po
 
 La línea base actual mantiene a Distripernos como entidad propietaria y administradora del inventario, a PROMED como proveedor externo que puede recibir custodia operativa sin adquirir propiedad y a ANKLO como brazo operativo de instalación que usa materiales administrados por Distripernos. El modelo admite una futura ANKLO independiente solo cuando exista evidencia y vigencia nuevas; no implementa hoy contabilidad multiempresa ni reatribuye historia.
 
-El diseño puede comenzar contra contratos y datos ficticios, pero una ejecución productiva queda condicionada a catálogo/unidades, kerf, tolerancias, compatibilidad, casos reales, usuarios/capacidades, reglas de pérdida y formatos/evidencias aplicables. Los criterios verificables están en [Criterios de Aceptación de Manufactura y Corte — Incremento 1 v1.0](./acceptance/Criterios_Aceptacion_Manufactura_Corte_Incremento_1_v1.0.md).
+El diseño puede comenzar contra contratos y datos ficticios, pero una ejecución productiva queda condicionada a catálogo/unidades, kerf, tolerancias, compatibilidad, casos reales, usuarios/capacidades, reglas de pérdida y formatos/evidencias aplicables. Los criterios verificables están en [Criterios de Aceptación de Manufactura y Corte — Incremento 1 v1.1](./acceptance/Criterios_Aceptacion_Manufactura_Corte_Incremento_1_v1.1.md).
+
+### 24.5 Incremento 1B — trazabilidad visible y completitud del detalle de solicitudes de corte
+
+**Estado de alcance:** aprobado funcionalmente por Israel para especificación e
+implementación posterior. Esta decisión funcional no aprueba formalmente este
+PRD, que permanece **BORRADOR**, ni cambia el estado **PROPUESTO** de los ADR
+0007 y 0009.
+
+**Objetivo y problema.** Completar la lectura de una solicitud de corte haciendo
+visible su historial autorizado y, cuando exista, el motivo de cancelación. El
+Incremento 1A ya conserva esos hechos en `AuditEvent`, pero el detalle actual no
+los consulta ni presenta. La ausencia de esa lectura reduce la trazabilidad
+observable y obliga a inspeccionar persistencia para reconstruir una transición.
+
+**Alcance.** El incremento es exclusivamente informativo y comprende contratos
+de salida mínimos, un puerto de lectura de historial, consulta de persistencia,
+autorización, API de lectura, presentación en el detalle y pruebas. La solicitud
+se sigue leyendo con `cut_request:read`; el historial y el motivo de cancelación
+requieren además la capacidad separada `cut_request:read_history`.
+
+**Capacidades y seguridad.** `cut_request:read` no concede por sí sola acceso al
+historial. El servidor valida ambas capacidades y el alcance organizacional; la
+interfaz no se usa como frontera de seguridad. Un actor autorizado para historial
+puede recibir `actorReference`, una referencia técnica controlada que no equivale
+a identidad humana verificada. No se inventan nombres, el UUID completo no se
+presenta como elemento principal y no se exponen los snapshots `before`/`after`
+completos ni campos ajenos al contrato mínimo.
+
+**Auditoría y aislamiento.** La lectura se deriva de eventos append-only y no
+modifica el registro auditado. Toda consulta conserva `organization_id` en el
+servicio y en persistencia, opera bajo la política RLS aplicable y no revela si
+existe una solicitud o evento de otra organización. La presentación distingue
+acción, fecha, referencia técnica del actor y motivo permitido sin afirmar
+autoría humana, verdad material o validez jurídica.
+
+**Limitaciones y datos maestros.** Los únicos estados continúan siendo `DRAFT`,
+`SUBMITTED` y `CANCELLED`; no se agregan transiciones posteriores a `SUBMITTED`
+ni comandos de escritura. `MM` continúa como configuración ficticia temporal,
+prioridad continúa como texto y `requiredAt` conserva su semántica actual. No se
+incorpora `committedAt`, catálogo productivo, precisión, escala, conversión o
+redondeo. Producción continúa fallando cerrada sin identidad real.
+
+**Fuera de alcance.** Revisión, aprobación, rechazo, bloqueo, reapertura,
+asignación, planificación, ejecución, inventario, costos, integración con Migo,
+optimizador y cualquier efecto físico u operativo. El incremento no altera
+`FR-CUT-004`: completa la consulta de la solicitud existente sin convertirla en
+plan. Tampoco amplía las transiciones de `FR-CUT-010` ni modifica la regla
+append-only de `FR-AUD-001`.
+
+**Persistencia y dependencia técnica.** La inspección del Incremento 1A confirma
+que `AuditEvent` ya conserva organización, actor técnico, acción, fecha, estado
+anterior/posterior, motivo y correlación bajo RLS. Por ello no se prevé migración;
+si la implementación descubre un dato indispensable ausente, debe detenerse y
+volver a decisión documental en vez de ampliar el esquema por inferencia.
+
+**Criterios de aceptación.** La aceptación funcional se verifica mediante
+`AC-CUT-1B-001`–`AC-CUT-1B-012` en el documento de criterios del Incremento 1.
+Debe demostrarse lectura básica sin historial, acceso autorizado al historial y
+motivo, denegaciones por capacidad y organización, minimización de actor y datos,
+orden estable, ausencia de mutaciones y ausencia de migración.
+
+**Dependencias futuras.** La identidad productiva, el mapeo de referencias
+técnicas a identidades verificadas y sus reglas de presentación requieren una
+decisión posterior. También permanecen pendientes el catálogo productivo de
+unidades y las políticas de precisión, escala, conversión y redondeo; ninguna
+impide especificar esta lectura, pero sí impide presentarlas como aprobadas.
 
 ## 25. Fases posteriores
 
@@ -1204,7 +1272,7 @@ La clasificación indica el punto más temprano afectado. Los textos siguientes 
 
 ## 30. Criterios de aceptación del PRD y del producto
 
-Los escenarios canónicos y detallados del primer incremento manual están en [Criterios de Aceptación de Manufactura y Corte — Incremento 1 v1.0](./acceptance/Criterios_Aceptacion_Manufactura_Corte_Incremento_1_v1.0.md). Los casos `AC-009` y `AC-010` siguientes se conservan como criterios generales históricos; para manufactura/corte se verifican mediante `AC-MC-001`–`AC-MC-028`.
+Los escenarios canónicos y detallados del primer incremento manual están en [Criterios de Aceptación de Manufactura y Corte — Incremento 1 v1.1](./acceptance/Criterios_Aceptacion_Manufactura_Corte_Incremento_1_v1.1.md). Los casos `AC-009` y `AC-010` siguientes se conservan como criterios generales históricos; para manufactura/corte se verifican mediante `AC-MC-001`–`AC-MC-028`.
 
 ### 30.1 Criterios para aceptar este PRD
 
@@ -1251,6 +1319,7 @@ Los escenarios canónicos y detallados del primer incremento manual están en [C
 | FR-INV-001–005 — movimientos, conteo, ATP y reservas            | Principal: ADR 0005. Soporte: ADR 0004 para snapshot/cola y ADR 0006 para reservas comerciales.                                                           | `PROD-007`, `PROD-010`–`PROD-013`, `PROD-019`              | `ADR-Q-004`, `LOG-Q-005`, `LOG-Q-006`, `LOG-Q-013`, `LOG-Q-014`, `LOG-Q-020`, `IMP-Q-002`, `IMP-Q-003`, `IMP-Q-008`, `IMP-Q-010`, `IMP-Q-011`, `CFG-001`, `CFG-005`, `CFG-009` | AC-005, AC-007, AC-015, AC-017        |
 | FR-COM-001–006 — cotización, precio, abastecimiento y orden     | Principal: ADR 0006. Soporte: ADR 0005 para ATP/reservas, ADR 0004 para orden/cola y ADR 0003 para permisos.                                              | `PROD-014`–`PROD-019`                                      | `ADR-Q-002`, `ADR-Q-003`, `LOG-Q-011`, `LOG-Q-012`, `IMP-Q-003`, `IMP-Q-005`–`IMP-Q-007`, `CFG-001`–`CFG-005`, `CFG-010`, `CFG-011`                                            | AC-003, AC-004, AC-014, AC-016        |
 | FR-CUT-001–010 — manufactura y corte manual                     | Principal: ADR 0009 propuesto. Soporte: ADR 0005 para inventario; ADR 0006 para costo/servicio; ADR 0007 para piezas y planificación; ADR 0004 para Migo. | `PROD-028`–`PROD-042`                                      | `LOG-Q-011`, `LOG-Q-012`, `LOG-Q-016`–`LOG-Q-019`, `LOG-Q-021`–`LOG-Q-028`, `IMP-Q-013`, `IMP-Q-016`, `CFG-006`, `CFG-007`, `CFG-013`–`CFG-017`                                | AC-009, AC-010; AC-MC-001–AC-MC-028   |
+| Incremento 1B — lectura de historial de solicitudes de corte    | ADR 0001 y ADR 0003 para seguridad/aislamiento; ADR 0009 permanece propuesto y no se amplía.                                                              | `PROD-043`                                                 | Identidad productiva, asignaciones reales y catálogo/unidades continúan pendientes; no se prevé migración.                                                                     | AC-CUT-1B-001–AC-CUT-1B-012           |
 | FR-EXT-001–003 — stock externo y préstamos                      | Principal: ADR 0008. Soporte: ADR 0005 para frontera propia, ADR 0006 para abastecimiento y ADR 0004 para efectos Migo.                                   | `PROD-022`, `PROD-023`, `PROD-024`                         | `ADR-Q-006`, `LOG-Q-009`, `LOG-Q-010`, `LOG-Q-015`, `IMP-Q-012`, `CFG-008`, `SUP-003`                                                                                          | AC-011–AC-013                         |
 | FR-OPS-001–005 — obras y operación de campo                     | ADR 0003 para contexto; ADR 0005 solo para consumos/movimientos. ADR específico pendiente si la fase exige una decisión adicional.                        | `PROD-021`, `PROD-027`; documentos canónicos de campo      | `ADR-Q-005`, `LOG-Q-008`, `IMP-Q-014`; preguntas operativas/técnicas de discovery                                                                                              | AC definidos antes de ingresar a fase |
 | FR-QLT-001–002 y FR-SST-001–002                                 | ADR 0003 para contexto/autorización; base funcional en Manual, Bosquejo y fuentes técnicas aplicables.                                                    | Salvaguardas canónicas; sin autoridad final atribuida      | ITP, criterios, permisos y revisión competente por definir                                                                                                                     | AC definidos antes de ingresar a fase |
@@ -1282,7 +1351,7 @@ Los ADR 0003–0009 en su versión vigente y estado documental indicado gobierna
 - [Mapa de fuente de verdad](../architecture/mapa-fuentes-de-verdad-v1.0.md)
 - [Registro de decisiones de producto](./decisions/Registro_Decisiones_Producto_v2.0.md)
 - [Preguntas pendientes](./decisions/Preguntas_Supuestos_Pendientes_v2.0.md)
-- [Criterios de Aceptación de Manufactura y Corte — Incremento 1 v1.0](./acceptance/Criterios_Aceptacion_Manufactura_Corte_Incremento_1_v1.0.md)
+- [Criterios de Aceptación de Manufactura y Corte — Incremento 1 v1.1](./acceptance/Criterios_Aceptacion_Manufactura_Corte_Incremento_1_v1.1.md)
 - ADR 0001–0009 en `docs/adr/`, con prevalencia de las correcciones vigentes de 0003–0009 y sin cambiar su estado propuesto.
 
 ## 32. Condiciones para pasar de BORRADOR a APROBADO
