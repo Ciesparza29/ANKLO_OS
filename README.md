@@ -14,11 +14,20 @@ Fundación técnica del ERP ANKLO-OS. Todavía no contiene módulos operativos. 
 pnpm install --frozen-lockfile
 ```
 
-`.env.example` contiene únicamente valores locales de PostgreSQL y es la fuente de verdad usada por Compose. No guardar secretos reales. Para iniciar PostgreSQL y la aplicación:
+`.env.example` contiene únicamente valores ficticios de desarrollo local. No guardar secretos reales. Para iniciar PostgreSQL y la aplicación, carga sus variables en la misma sesión de shell que ejecutará Next.js:
 
 ```bash
 docker compose up -d postgres
+set -a
+source .env.example
+set +a
 pnpm --filter @anklo/web dev
+```
+
+`.env.example` carga una organización ficticia de desarrollo. Para usar una organización QA distinta, ejecuta lo siguiente después de cargar el archivo y antes de iniciar Next.js:
+
+```bash
+export ANKLO_DEV_ORGANIZATION_ID=<UUID_QA>
 ```
 
 La aplicación queda disponible en `http://localhost:3000` y la salud técnica en `/api/health`.
