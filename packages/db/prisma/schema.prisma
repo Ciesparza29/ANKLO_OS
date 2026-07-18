@@ -111,6 +111,7 @@ model Product {
   description    String?  @db.VarChar(1000)
   sku            String?  @db.VarChar(120)
   externalCode   String?  @map("external_code") @db.VarChar(120)
+  templateId     String?  @map("template_id") @db.Uuid
   categoryId     String?  @map("category_id") @db.Uuid
   baseUnitId     String?  @map("base_unit_id") @db.Uuid
   category       String?  @db.VarChar(100)
@@ -121,12 +122,35 @@ model Product {
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy      String   @map("created_by") @db.Uuid
 
-  categoryRef ProductCategory? @relation(fields: [organizationId, categoryId], references: [organizationId, id], onDelete: Restrict, map: "products_category_fkey")
-  baseUnitRef UnitOfMeasure?   @relation(fields: [organizationId, baseUnitId], references: [organizationId, id], onDelete: Restrict, map: "products_base_unit_fkey")
+  template       ProductTemplate? @relation(fields: [organizationId, templateId], references: [organizationId, id], onDelete: Restrict, map: "products_template_fkey")
+  categoryRef    ProductCategory? @relation(fields: [organizationId, categoryId], references: [organizationId, id], onDelete: Restrict, map: "products_category_fkey")
+  baseUnitRef    UnitOfMeasure?   @relation(fields: [organizationId, baseUnitId], references: [organizationId, id], onDelete: Restrict, map: "products_base_unit_fkey")
 
   @@unique([organizationId, id])
   @@index([organizationId, isActive], map: "products_org_is_active_idx")
   @@map("products")
+}
+
+model ProductTemplate {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  name           String   @db.VarChar(200)
+  description    String?  @db.VarChar(1000)
+  categoryId     String?  @map("category_id") @db.Uuid
+  baseUnitId     String?  @map("base_unit_id") @db.Uuid
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy      String   @map("created_by") @db.Uuid
+
+  categoryRef ProductCategory? @relation(fields: [organizationId, categoryId], references: [organizationId, id], onDelete: Restrict, map: "product_templates_category_fkey")
+  baseUnitRef UnitOfMeasure?   @relation(fields: [organizationId, baseUnitId], references: [organizationId, id], onDelete: Restrict, map: "product_templates_base_unit_fkey")
+
+  products Product[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, isActive], map: "product_templates_org_is_active_idx")
+  @@map("product_templates")
 }
 
 model ProductCategory {
@@ -138,7 +162,8 @@ model ProductCategory {
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  products Product[]
+  productTemplates ProductTemplate[]
+  products         Product[]
 
   @@unique([organizationId, id])
   @@index([organizationId, isActive], map: "product_categories_org_is_active_idx")
@@ -154,7 +179,8 @@ model UnitOfMeasure {
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  products Product[]
+  productTemplates ProductTemplate[]
+  products         Product[]
 
   @@unique([organizationId, id])
   @@index([organizationId, isActive], map: "units_of_measure_org_is_active_idx")

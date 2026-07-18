@@ -274,6 +274,30 @@ export const unitOfMeasureDtoSchema = z.object({
 
 export type UnitOfMeasureDto = z.infer<typeof unitOfMeasureDtoSchema>;
 
+export const productTemplateSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  name: z.string(),
+  description: z.string().nullable(),
+  categoryId: z.string().uuid().nullable(),
+  baseUnitId: z.string().uuid().nullable(),
+  isActive: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  createdBy: z.string().uuid(),
+});
+
+export type ProductTemplateDto = z.infer<typeof productTemplateSchema>;
+
+export const createProductTemplateSchema = z
+  .object({
+    name: requiredText(200),
+    description: optionalText(1000),
+    categoryId: z.string().uuid().optional(),
+    baseUnitId: z.string().uuid().optional(),
+  })
+  .strict();
+
 export const createProductCategorySchema = z
   .object({
     name: requiredText(100),
