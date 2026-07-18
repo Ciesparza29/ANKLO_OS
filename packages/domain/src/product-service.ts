@@ -3,6 +3,7 @@ import type {
   ProductDto,
   ProductListQuery,
   CreateProductInput,
+  ProductTemplateDto,
 } from "@anklo/contracts";
 import { Product, type ProductState } from "./product";
 
@@ -12,16 +13,29 @@ export interface ProductActorContext {
   readonly capabilities: ReadonlySet<ProductCapability | string>;
 }
 
+export interface ProductDetailResult {
+  readonly product: ProductState;
+  readonly template: ProductTemplateDto | null;
+}
+
 export interface ProductStore {
   create(state: ProductState): Promise<ProductState>;
   list(
     organizationId: string,
     query: ProductListQuery,
   ): Promise<readonly ProductState[]>;
+  findById(
+    organizationId: string,
+    id: string,
+  ): Promise<ProductDetailResult | null>;
 }
 
 export class ProductAuthorizationError extends Error {
   readonly code = "FORBIDDEN";
+}
+
+export class ProductNotFoundError extends Error {
+  readonly code = "NOT_FOUND";
 }
 
 export interface ProductServiceDependencies {
@@ -74,5 +88,18 @@ export class ProductService {
   ): Promise<readonly ProductDto[]> {
     requireCapability(actor, "product:read");
     return this.dependencies.store.list(actor.organizationId, query);
+  }
+
+  async getDetail(
+    actor: ProductActorContext,
+    id: string,
+  ): Promise<ProductDetailResult> {
+    requireCapability(actor, "product:read");
+    const result = await this.dependencies.store.findById(
+      actor.organizationId,
+      id,
+    );
+    if (!result) throw new ProductNotFoundError("Producto no encontrado");
+    return result;
   }
 }

@@ -328,3 +328,9 @@ export const updateCatalogStateSchema = z
   .strict();
 
 export type UpdateCatalogStateInput = z.infer<typeof updateCatalogStateSchema>;
+
+/** Read-model compuesto para detalle de producto — solo lectura. */
+export interface ProductDetailResponse {
+  readonly product: ProductDto;
+  readonly template: ProductTemplateDto | null;
+}

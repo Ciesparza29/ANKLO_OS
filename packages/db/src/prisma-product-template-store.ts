@@ -68,5 +68,4 @@ export class PrismaProductTemplateStore {
     });
     return toDto(record);
   }
-
 }

@@ -267,7 +267,15 @@ export function ProductList() {
                       color: "#0f172a",
                     }}
                   >
-                    {product.name}
+                    <a
+                      href={`/products/${product.id}`}
+                      style={{
+                        color: "#3b82f6",
+                        textDecoration: "none",
+                      }}
+                    >
+                      {product.name}
+                    </a>
                   </td>
                   <td
                     style={{
@@ -291,11 +299,16 @@ export function ProductList() {
                     }}
                   >
                     {product.templateId ? (
-                      <span style={{ fontWeight: "500", color: "#0f172a" }} title={product.templateId}>
+                      <span
+                        style={{ fontWeight: "500", color: "#0f172a" }}
+                        title={product.templateId}
+                      >
                         Vinculado
                       </span>
                     ) : (
-                      <span style={{ color: "#94a3b8", fontStyle: "italic" }}>Legacy</span>
+                      <span style={{ color: "#94a3b8", fontStyle: "italic" }}>
+                        Legacy
+                      </span>
                     )}
                   </td>
                   <td

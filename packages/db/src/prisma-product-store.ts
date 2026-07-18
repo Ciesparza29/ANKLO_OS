@@ -1,5 +1,9 @@
-import type { ProductListQuery } from "@anklo/contracts";
-import type { ProductState, ProductStore } from "@anklo/domain";
+import type { ProductListQuery, ProductTemplateDto } from "@anklo/contracts";
+import type {
+  ProductState,
+  ProductStore,
+  ProductDetailResult,
+} from "@anklo/domain";
 import {
   Prisma,
   type PrismaClient,
@@ -96,6 +100,34 @@ export class PrismaProductStore implements ProductStore {
         take: 200,
       });
       return records.map(toState);
+    });
+  }
+
+  async findById(
+    organizationId: string,
+    id: string,
+  ): Promise<ProductDetailResult | null> {
+    return this.withTenant(organizationId, async (transaction) => {
+      const record = await transaction.product.findUnique({
+        where: { organizationId_id: { organizationId, id } },
+        include: { template: true },
+      });
+      if (!record) return null;
+      const template: ProductTemplateDto | null = record.template
+        ? {
+            id: record.template.id,
+            organizationId: record.template.organizationId,
+            name: record.template.name,
+            description: record.template.description,
+            categoryId: record.template.categoryId,
+            baseUnitId: record.template.baseUnitId,
+            isActive: record.template.isActive,
+            createdAt: record.template.createdAt.toISOString(),
+            updatedAt: record.template.updatedAt.toISOString(),
+            createdBy: record.template.createdBy,
+          }
+        : null;
+      return { product: toState(record), template };
     });
   }
 

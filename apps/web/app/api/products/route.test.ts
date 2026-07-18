@@ -64,7 +64,9 @@ describe("API products (Incremento C)", () => {
     expect(response.status).toBe(200);
     const json = await response.json();
     expect(json.products).toHaveLength(1);
-    expect(json.products[0].templateId).toBe("00000000-0000-4000-8000-000000000111");
+    expect(json.products[0].templateId).toBe(
+      "00000000-0000-4000-8000-000000000111",
+    );
   });
 
   it("GET /api/products devuelve templateId nulo en caso legacy", async () => {

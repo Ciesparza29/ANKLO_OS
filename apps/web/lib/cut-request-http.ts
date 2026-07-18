@@ -5,6 +5,7 @@ import {
   CutRequestNotFoundError,
   ProductAuthorizationError,
   ProductDomainError,
+  ProductNotFoundError,
 } from "@anklo/domain";
 
 export async function parseJson<T>(
@@ -47,6 +48,9 @@ export function apiError(error: unknown): Response {
   }
   if (error instanceof ProductAuthorizationError) {
     return Response.json({ error: "FORBIDDEN" }, { status: 403 });
+  }
+  if (error instanceof ProductNotFoundError) {
+    return Response.json({ error: "NOT_FOUND" }, { status: 404 });
   }
   if (error instanceof ProductDomainError) {
     return Response.json(
