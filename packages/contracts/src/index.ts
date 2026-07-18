@@ -245,6 +245,7 @@ export interface ProductDto {
   readonly manufacturer?: string;
   readonly baseUnit?: string;
   readonly isActive: boolean;
+  readonly templateId?: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly createdBy: string;

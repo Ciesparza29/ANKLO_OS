@@ -48,9 +48,19 @@ export class ProductService {
   ): Promise<ProductDto> {
     requireCapability(actor, "product:create");
     const at = this.dependencies.now();
+
+    // NOTA DE DISEÑO (TRANSITORIA):
+    // Actualmente estamos creando el ProductTemplate en relación 1:1 de forma atómica para no romper
+    // la compatibilidad con el flujo simple `/products/new`.
+    // Por diseño temporal, estamos omitiendo la validación estricta de nombre duplicado del
+    // ProductTemplate en este flujo simple. Esto NO es una política final del catálogo,
+    // sino una medida de compatibilidad en esta iteración.
+    const templateId = this.dependencies.newId();
+
     const product = Product.create({
       ...input,
       id: this.dependencies.newId(),
+      templateId,
       organizationId: actor.organizationId,
       createdBy: actor.actorId,
       createdAt: at,

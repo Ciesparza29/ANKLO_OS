@@ -75,6 +75,10 @@ describe("ProductService", () => {
     };
     const created = await service.create(ctx, input());
     expect(created.name).toBe("Producto Ficticio");
+    expect(created.templateId).toBeDefined();
+    expect(created.templateId).toMatch(
+      /^00000000-0000-4000-8000-\d{12}$/,
+    );
   });
 
   it("rechaza crear sin product:create", async () => {

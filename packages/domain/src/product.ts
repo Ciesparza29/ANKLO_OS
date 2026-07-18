@@ -16,6 +16,7 @@ export type ProductState = ProductDto;
 
 export interface CreateProductDomainInput extends CreateProductInput {
   readonly id: string;
+  readonly templateId?: string;
   readonly organizationId: string;
   readonly createdBy: string;
   readonly createdAt: Date;
@@ -44,6 +45,7 @@ export class Product {
       ...(input.category ? { category: input.category } : {}),
       ...(input.manufacturer ? { manufacturer: input.manufacturer } : {}),
       ...(input.baseUnit ? { baseUnit: input.baseUnit } : {}),
+      ...(input.templateId ? { templateId: input.templateId } : {}),
       isActive: true,
       createdAt: timestamp,
       updatedAt: timestamp,

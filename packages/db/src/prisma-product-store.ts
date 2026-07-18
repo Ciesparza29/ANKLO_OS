@@ -21,6 +21,7 @@ function toState(record: Product): ProductState {
     ...(record.category ? { category: record.category } : {}),
     ...(record.manufacturer ? { manufacturer: record.manufacturer } : {}),
     ...(record.baseUnit ? { baseUnit: record.baseUnit } : {}),
+    ...(record.templateId ? { templateId: record.templateId } : {}),
     isActive: record.isActive,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
@@ -40,9 +41,27 @@ export class PrismaProductStore implements ProductStore {
 
   async create(state: ProductState): Promise<ProductState> {
     return await this.withTenant(state.organizationId, async (transaction) => {
+      if (state.templateId) {
+        await transaction.productTemplate.create({
+          data: {
+            id: state.templateId,
+            organizationId: state.organizationId,
+            name: state.name,
+            description: state.description ?? null,
+            categoryId: state.categoryId ?? null,
+            baseUnitId: state.baseUnitId ?? null,
+            isActive: state.isActive,
+            createdAt: new Date(state.createdAt),
+            updatedAt: new Date(state.updatedAt),
+            createdBy: state.createdBy,
+          },
+        });
+      }
+
       const created = await transaction.product.create({
         data: {
           id: state.id,
+          templateId: state.templateId ?? null,
           organizationId: state.organizationId,
           name: state.name,
           description: state.description ?? null,
