@@ -92,11 +92,32 @@ describe("ProductService", () => {
     );
   });
 
-  it("permite listar con product:read", async () => {
+  it("permite listar con product:read y preserva templateId cuando existe", async () => {
     const { service, store } = setup();
     await store.create({
       name: "Producto Ficticio",
       description: "Descripción ficticia",
+      id: newId(),
+      templateId: "template-123",
+      organizationId: orgA,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: actor().actorId,
+    });
+    const ctx = {
+      ...actor(),
+      capabilities: new Set<ProductCapability>(["product:read"]),
+    };
+    const results = await service.list(ctx, {});
+    expect(results).toHaveLength(1);
+    expect(results[0].templateId).toBe("template-123");
+  });
+
+  it("lista preservando templateId nulo o ausente (legacy)", async () => {
+    const { service, store } = setup();
+    await store.create({
+      name: "Producto Ficticio Legacy",
       id: newId(),
       organizationId: orgA,
       isActive: true,
@@ -108,7 +129,9 @@ describe("ProductService", () => {
       ...actor(),
       capabilities: new Set<ProductCapability>(["product:read"]),
     };
-    await expect(service.list(ctx, {})).resolves.toHaveLength(1);
+    const results = await service.list(ctx, {});
+    expect(results).toHaveLength(1);
+    expect(results[0].templateId).toBeUndefined();
   });
 
   it("rechaza listar sin product:read", async () => {
