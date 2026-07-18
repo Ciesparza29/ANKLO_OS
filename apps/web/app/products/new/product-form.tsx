@@ -17,8 +17,8 @@ export function ProductForm() {
     async function loadCatalogs() {
       try {
         const [catRes, unitRes] = await Promise.all([
-          fetch("/api/categories"),
-          fetch("/api/units"),
+          fetch("/api/categories?isActive=true"),
+          fetch("/api/units?isActive=true"),
         ]);
         if (catRes.ok) {
           const { categories } = await catRes.json();

@@ -273,3 +273,33 @@ export const unitOfMeasureDtoSchema = z.object({
 });
 
 export type UnitOfMeasureDto = z.infer<typeof unitOfMeasureDtoSchema>;
+
+export const createProductCategorySchema = z
+  .object({
+    name: requiredText(100),
+    code: optionalText(32),
+  })
+  .strict();
+
+export type CreateProductCategoryInput = z.infer<
+  typeof createProductCategorySchema
+>;
+
+export const createUnitOfMeasureSchema = z
+  .object({
+    name: requiredText(100),
+    symbol: requiredText(32),
+  })
+  .strict();
+
+export type CreateUnitOfMeasureInput = z.infer<
+  typeof createUnitOfMeasureSchema
+>;
+
+export const updateCatalogStateSchema = z
+  .object({
+    isActive: z.boolean(),
+  })
+  .strict();
+
+export type UpdateCatalogStateInput = z.infer<typeof updateCatalogStateSchema>;
