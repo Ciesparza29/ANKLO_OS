@@ -211,6 +211,17 @@ export function ProductList() {
                     textTransform: "uppercase",
                   }}
                 >
+                  Plantilla
+                </th>
+                <th
+                  style={{
+                    padding: "1rem",
+                    fontWeight: "600",
+                    color: "#475569",
+                    fontSize: "0.85rem",
+                    textTransform: "uppercase",
+                  }}
+                >
                   Descripción Técnica
                 </th>
                 <th
@@ -273,6 +284,19 @@ export function ProductList() {
                     }}
                   >
                     {product.category || "-"}
+                  </td>
+                  <td
+                    style={{
+                      padding: "1rem",
+                    }}
+                  >
+                    {product.templateId ? (
+                      <span style={{ fontWeight: "500", color: "#0f172a" }} title={product.templateId}>
+                        Vinculado
+                      </span>
+                    ) : (
+                      <span style={{ color: "#94a3b8", fontStyle: "italic" }}>Legacy</span>
+                    )}
                   </td>
                   <td
                     style={{
