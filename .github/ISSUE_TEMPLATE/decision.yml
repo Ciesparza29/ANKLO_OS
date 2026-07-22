@@ -1,0 +1,83 @@
+name: Decisión
+description: Registrar una decisión funcional o técnica que requiere aprobación explícita.
+title: "[DECISION] "
+labels:
+  - "type:decision"
+  - "needs-decision"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Este formulario registra una decisión pendiente.
+        No marque una alternativa como aprobada sin evidencia del decisor autorizado.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Decisión requerida
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexto
+    validations:
+      required: true
+
+  - type: textarea
+    id: sources
+    attributes:
+      label: Fuentes autorizadas
+    validations:
+      required: true
+
+  - type: textarea
+    id: options
+    attributes:
+      label: Alternativas
+      placeholder: |
+        1. Alternativa A
+        2. Alternativa B
+    validations:
+      required: true
+
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Recomendación técnica
+    validations:
+      required: true
+
+  - type: textarea
+    id: impacts
+    attributes:
+      label: Impactos
+    validations:
+      required: true
+
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Riesgo de la decisión
+      options:
+        - Bajo
+        - Medio
+        - Alto
+        - Crítico
+    validations:
+      required: true
+
+  - type: input
+    id: approver
+    attributes:
+      label: Decisor requerido
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Evidencia necesaria para cerrar
+    validations:
+      required: true

@@ -1,0 +1,78 @@
+name: Documentación
+description: Crear o actualizar documentación técnica, funcional u operativa.
+title: "[DOCS] "
+labels:
+  - "type:docs"
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objetivo
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema documental
+    validations:
+      required: true
+
+  - type: textarea
+    id: sources
+    attributes:
+      label: Fuentes autorizadas
+    validations:
+      required: true
+
+  - type: input
+    id: requirements
+    attributes:
+      label: Requisitos o decisiones relacionados
+      placeholder: PROD-000, DEC-000, ADR-0000 o No aplica
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Archivos previstos
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Alcance
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Fuera de alcance
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Criterios de aceptación
+      placeholder: |
+        - [ ] ...
+        - [ ] git diff --check no reporta errores.
+        - [ ] pnpm verify finaliza correctamente.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Riesgo preliminar
+      options:
+        - Bajo
+        - Medio
+        - Alto
+        - Crítico
+    validations:
+      required: true
