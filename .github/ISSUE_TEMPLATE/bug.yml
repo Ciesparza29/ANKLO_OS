@@ -1,0 +1,95 @@
+name: Bug
+description: Reportar un comportamiento incorrecto o una regresión reproducible.
+title: "[BUG] "
+labels:
+  - "type:bug"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        No incluya contraseñas, tokens, datos personales reales ni información confidencial.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Resumen
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Comportamiento esperado
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Comportamiento observado
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Pasos para reproducir
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidencia
+      description: Incluya mensajes de error, registros sanitizados o capturas sin información sensible.
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Entorno y revisión
+      description: Indique máquina, sistema operativo, rama y SHA.
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected_scope
+    attributes:
+      label: Alcance afectado
+    validations:
+      required: true
+
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Riesgo preliminar
+      options:
+        - Bajo
+        - Medio
+        - Alto
+        - Crítico
+    validations:
+      required: true
+
+  - type: textarea
+    id: security_tenant
+    attributes:
+      label: Seguridad y aislamiento multiempresa
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Criterios de aceptación de la corrección
+      placeholder: |
+        - [ ] El fallo ya no se reproduce.
+        - [ ] Existe una prueba de regresión.
+        - [ ] pnpm verify finaliza correctamente.
+    validations:
+      required: true

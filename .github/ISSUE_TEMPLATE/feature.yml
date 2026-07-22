@@ -1,0 +1,103 @@
+name: Funcionalidad
+description: Proponer una capacidad funcional o mejora para ANKLO-OS.
+title: "[FEATURE] "
+labels:
+  - "type:feature"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Complete únicamente información respaldada por fuentes autorizadas.
+        Una propuesta no se considera aprobada por el hecho de crear este issue.
+
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objetivo
+      description: Indique el resultado concreto que se busca.
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema que resuelve
+      description: Describa la necesidad operativa, funcional o técnica.
+    validations:
+      required: true
+
+  - type: textarea
+    id: authorized_sources
+    attributes:
+      label: Fuentes autorizadas
+      description: Cite PRD, decisiones, ADR, procesos, normas u otros documentos aplicables.
+    validations:
+      required: true
+
+  - type: input
+    id: requirements
+    attributes:
+      label: Requisitos relacionados
+      description: Identificadores como PROD-017, RF-023, RNF-008, DEC-014 o ADR-0003.
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Alcance
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Fuera de alcance
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Criterios de aceptación
+      placeholder: |
+        - [ ] ...
+        - [ ] ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Riesgo preliminar
+      options:
+        - Bajo
+        - Medio
+        - Alto
+        - Crítico
+    validations:
+      required: true
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Riesgos y mitigaciones
+    validations:
+      required: true
+
+  - type: textarea
+    id: tests
+    attributes:
+      label: Pruebas obligatorias
+      placeholder: |
+        - [ ] ...
+        - [ ] pnpm verify
+    validations:
+      required: true
+
+  - type: textarea
+    id: definition_of_done
+    attributes:
+      label: Condición de terminado
+    validations:
+      required: true
