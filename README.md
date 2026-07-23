@@ -1,9 +1,6 @@
 # ANKLO-OS — desarrollo
 
-Base temprana del ERP ANKLO-OS con un primer incremento funcional de solicitudes
-manuales de corte: creación, listado, detalle, envío y cancelación. La
-documentación funcional permanece en `ANKLO_Paquete_Documental_v1.0/` y no es
-sustituida por este README.
+Base temprana del ERP ANKLO-OS con un primer incremento funcional integrado en `main` de solicitudes manuales de corte: creación, listado, detalle, envío, cancelación e historial de solicitudes de corte. La documentación funcional permanece en `ANKLO_Paquete_Documental_v1.0/` y no es sustituida por este README.
 
 ## Requisitos
 
@@ -77,3 +74,4 @@ Crear una rama corta desde la rama predeterminada, realizar un único cambio rev
 - `ANKLO_Paquete_Documental_v1.0/Resumen_Maestro_Proyecto_ANKLO_v1.1.md`
 - `ANKLO_Paquete_Documental_v1.0/README.md`
 - `ANKLO_Paquete_Documental_v1.0/Glosario_Maestro_ANKLO_v1.1-borrador.md`, solo como terminología auxiliar no aprobada.
+- `docs/ai/README.md`, guía de contexto para agentes (no sustituye fuentes funcionales).
