@@ -2,13 +2,14 @@
 
 ## Propósito y fuentes
 
-ANKLO-OS es un ERP de campo para instalación de anclajes, todavía sin módulos operativos. Antes de cambiar código, leer estas rutas canónicas:
+ANKLO-OS es un ERP en desarrollo temprano. La rama `main` ya contiene incrementos operativos integrados de solicitudes de corte: creación, listado, detalle, envío, cancelación e historial. Antes de cambiar código, leer estas rutas canónicas:
 
 1. `ANKLO_Paquete_Documental_v1.0/Bosquejo_Arquitectura_ERP_ANKLO_OS_v1.1.md` — arquitectura y roadmap.
 2. `ANKLO_Paquete_Documental_v1.0/Manual_Maestro_Supervision_Anclajes_ANKLO_v1.1.md` — operación y evidencia.
 3. `ANKLO_Paquete_Documental_v1.0/Resumen_Maestro_Proyecto_ANKLO_v1.1.md` — contexto.
 4. `ANKLO_Paquete_Documental_v1.0/README.md` — límites documentales.
 5. `ANKLO_Paquete_Documental_v1.0/Glosario_Maestro_ANKLO_v1.1-borrador.md` — terminología auxiliar no aprobada.
+6. `docs/ai/README.md` — guía de entrada para agentes.
 
 Normativa, contrato, planos, RFI, evaluaciones y MPII aplicables prevalecen. Las versiones antiguas son historial. No combinar versiones ni convertir decisiones futuras en requisitos; registrar vacíos en `docs/decisions/open-questions.md`.
 
