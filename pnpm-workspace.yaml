@@ -5,7 +5,9 @@ packages:
 overrides:
   "ajv@8.20.0>fast-uri": 3.1.4
   "next@16.2.11>sharp": 0.35.3
-  postcss: 8.5.10
+  postcss: 8.5.18
+  "@prisma/dev>find-my-way": 9.7.0
+  "@prisma/dev>valibot": 1.4.2
 
 allowBuilds:
   "@prisma/engines": true
