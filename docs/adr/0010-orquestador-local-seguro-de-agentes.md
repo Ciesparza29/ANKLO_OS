@@ -349,7 +349,7 @@ orquestador no podrán conceder autoridad ni convertirse en aprobaciones.
 Las aprobaciones se representarán mediante un bloque estructurado y
 versionado, no mediante prosa libre.
 
-Ejemplo normativo:
+Ejemplo normativo válido de `PLAN_APPROVED`:
 
 ```yaml
 anklo_approval:
@@ -357,15 +357,18 @@ anklo_approval:
   approval_kind: PLAN_APPROVED
   repository: Ciesparza29/ANKLO_OS
   issue_number: 24
-  expires_at: ""
-  approval_event_id: ""
-  nonce: ""
-  base_sha: ""
-  plan_hash: ""
-  source_snapshot_hash: ""
-  authorized_files_hash: ""
-  package_hash: null
+  expires_at: "2099-12-31T23:59:59Z"
+  approval_event_id: "00000000-0000-4000-8000-000000000024"
+  nonce: "11111111-1111-4111-8111-111111111124"
+  base_sha: "79e6a525fe9e7d8a1335adff5fcf19942dd29465"
+  plan_hash: "1111111111111111111111111111111111111111111111111111111111111111"
+  source_snapshot_hash: "2222222222222222222222222222222222222222222222222222222222222222"
 ```
+
+Los valores anteriores son fixtures documentales no reutilizables. El ejemplo
+deberá superar el mismo esquema, las mismas reglas de campos obligatorios y las
+mismas restricciones de campos prohibidos que una instancia real. Su inclusión
+en el ADR no concede autoridad ni constituye una aprobación vigente.
 
 El cuerpo del comentario contiene únicamente datos declarados por el aprobador.
 El adaptador construirá y persistirá por separado un sobre observado desde la
@@ -400,7 +403,12 @@ PUSH_APPROVED
 MERGE_APPROVED
 ```
 
-`MERGE_APPROVED` solo registra que Israel puede ejecutar el merge manualmente.
+`MERGE_APPROVED` registra la autorización humana específica para que Israel
+ejecute manualmente el merge del número de PR y del `head SHA` declarados.
+
+No concede al orquestador capacidad de ejecutar el merge. Su ausencia,
+expiración, edición, eliminación, reutilización o discordancia equivale a
+denegación y bloquea la transición a `READY_FOR_HUMAN_MERGE`.
 
 #### Fuente, autenticidad, vigencia y protección contra replay
 
@@ -570,17 +578,32 @@ CI_PENDING -> CI_RUNNING | CI_FAILED
 CI_RUNNING -> CI_FAILED | CI_PASSED
 CI_FAILED -> CHANGES_REQUESTED | BLOCKED | CANCELLED
 CI_PASSED -> READY_FOR_HUMAN_MERGE
-READY_FOR_HUMAN_MERGE -> DONE | BLOCKED | CANCELLED
+READY_FOR_HUMAN_MERGE -> DONE | BLOCKED | QUARANTINED | CANCELLED
 ```
 
 Una transición desde `CHANGES_REQUESTED` a `READY_TO_DISPATCH` solo será válida
 si el plan y el alcance permanecen vigentes y se han revalidado paquete,
 aprobaciones y hashes; si cambian plan o alcance, deberá volver a `PLAN_READY`.
-`DONE` será terminal y solo se alcanzará después de observar desde GitHub el
-merge manual ejecutado por Israel y persistir el handoff final. Un run terminado
-sin merge se representará como `CANCELLED`, no como `DONE`. Desde estados
-terminales no se permitirán nuevos efectos; únicamente consultas y exportación
-de evidencia.
+`DONE` será terminal y solo podrá alcanzarse después de observar desde GitHub
+un merge manual que cumpla simultáneamente:
+
+```text
+OBSERVED_PR_NUMBER == MERGE_APPROVED.pull_request_number
+OBSERVED_PRE_MERGE_HEAD_SHA == MERGE_APPROVED.pull_request_head_sha
+OBSERVED_PRE_MERGE_HEAD_SHA == CODEX_REVIEW_PASS.commit_sha
+OBSERVED_PRE_MERGE_HEAD_SHA == CI_PASSED.commit_sha
+MERGE_APPROVED_VALID_AT_FINAL_PRE_MERGE_CHECK=YES
+MERGE_ACTOR_IS_ALLOWLISTED_HUMAN=YES
+```
+
+El merge observado no convertirá retroactivamente una operación no autorizada
+en válida. Si se observa un merge sin una aprobación vigente para el PR y head
+exactos, el run pasará a `QUARANTINED`, preservará la evidencia y no llegará a
+`DONE`.
+
+Un run terminado sin merge se representará como `CANCELLED`, no como `DONE`.
+Desde estados terminales no se permitirán nuevos efectos; únicamente consultas
+y exportación de evidencia.
 
 #### Estados de publicación, pull request y CI
 
@@ -638,36 +661,146 @@ REMOTE_HEAD_VERIFIED
 PR_OPEN
 CODEX_REVIEW_PASS
 CI_PASSED
-NO_INVALIDATED_APPROVALS
 HEAD_SHA_BINDING_VERIFIED
+MERGE_APPROVAL_VALID
+MERGE_APPROVAL_ACTOR_ALLOWLISTED
+MERGE_APPROVAL_UNEDITED
+MERGE_APPROVAL_UNEXPIRED
+MERGE_APPROVAL_NONCE_UNUSED
+MERGE_APPROVAL_PULL_REQUEST_NUMBER_VERIFIED
+MERGE_APPROVAL_PULL_REQUEST_HEAD_SHA_VERIFIED
+NO_INVALIDATED_APPROVALS
 ```
 
-Ese estado solo informa que Israel puede evaluar y ejecutar manualmente el
-merge. No constituye `MERGE_APPROVED` ni habilita una operación automática.
+`CI_PASSED` únicamente permite solicitar `MERGE_APPROVED`.
+
+`READY_FOR_HUMAN_MERGE` solo podrá alcanzarse después de recuperar y validar un
+`MERGE_APPROVED` vigente, no editado, emitido por el actor humano allowlisted y
+vinculado al número del PR y al `head SHA` exactos que también fueron revisados,
+publicados y validados por CI.
+
+El estado informa que Israel puede ejecutar manualmente ese merge exacto. No
+habilita al orquestador, a un agente ni a una herramienta automática para
+fusionar el PR.
+
+Inmediatamente antes de presentar la decisión de merge a Israel, el
+orquestador volverá a verificar:
+
+```text
+PR_STATE=OPEN
+PR_NUMBER_MATCH=YES
+PR_HEAD_SHA_MATCH=YES
+REMOTE_HEAD_MATCH=YES
+CI_FOR_EXACT_HEAD=PASSED
+CODEX_REVIEW_FOR_EXACT_HEAD=PASS
+MERGE_APPROVAL_VALID=YES
+MERGE_APPROVAL_EXPIRES_AT>NOW
+MERGE_APPROVAL_COMMENT_UNEDITED=YES
+MERGE_APPROVAL_NONCE_UNUSED=YES
+KILL_SWITCH=OFF
+```
+
+Cualquier cambio del `head SHA` invalidará `MERGE_APPROVED` y obligará a una
+nueva revisión, nueva CI y nueva aprobación de merge.
 
 ### 8. Work package
 
-Cada ejecución usará un paquete inmutable, generado fuera del worktree y
-validado antes del despacho.
+Cada ejecución usará un paquete inmutable, generado fuera del worktree
+después de validar `PLAN_APPROVED` y antes de solicitar
+`IMPLEMENT_APPROVED`.
 
-El hash se calculará sobre una representación canónica que excluya el propio
-campo `package_hash`.
+El work package es un contrato de alcance y ejecución. No es un contenedor
+mutable de aprobaciones posteriores. Solo podrá incorporar un vínculo
+inmutable con el evento `PLAN_APPROVED` que ya existía antes de generar el
+paquete.
 
-Cualquier cambio en:
+`IMPLEMENT_APPROVED`, `PUSH_APPROVED` y `MERGE_APPROVED` permanecerán fuera
+del work package. Se persistirán como registros externos en el `StateStore`,
+vinculados al `run_id`, al efecto autorizado y, cuando corresponda, al
+`package_hash`. Crear, observar, invalidar, expirar o reemplazar una de estas
+aprobaciones posteriores no modificará los bytes del paquete.
 
-- issue;
+La secuencia normativa será:
+
+```text
+1. Validar issue, snapshot fuente, plan y PLAN_APPROVED.
+2. Generar el work package inmutable.
+3. Calcular y persistir package_hash.
+4. Solicitar IMPLEMENT_APPROVED para ese package_hash exacto.
+5. Observar y validar IMPLEMENT_APPROVED como registro externo.
+6. Revalidar paquete, aprobación, lease, base SHA y kill switch.
+7. Permitir el despacho exclusivamente si todas las guardas coinciden.
+```
+
+```text
+WORK_PACKAGE_CONTAINS_DOWNSTREAM_APPROVAL_STATE=NO
+IMPLEMENT_APPROVED_IS_EXTERNAL_TO_PACKAGE=YES
+PUSH_APPROVED_IS_EXTERNAL_TO_PACKAGE=YES
+MERGE_APPROVED_IS_EXTERNAL_TO_PACKAGE=YES
+IMPLEMENT_APPROVED_REFERENCES_PACKAGE_HASH=YES
+DOWNSTREAM_APPROVAL_MUTATES_PACKAGE=NO
+DOWNSTREAM_APPROVAL_INVALIDATION_BLOCKS_EFFECT=YES
+```
+
+El vínculo interno permitido para la aprobación de plan tendrá una
+estructura equivalente a:
+
+```yaml
+plan_approval_binding:
+  approval_event_id: "00000000-0000-4000-8000-000000000024"
+  approval_comment_id: "5000000001"
+  approval_author_login: "Ciesparza29"
+  approval_comment_updated_at: "2026-07-26T13:00:00Z"
+  expires_at: "2099-12-31T23:59:59Z"
+  base_sha: "79e6a525fe9e7d8a1335adff5fcf19942dd29465"
+  plan_hash: "1111111111111111111111111111111111111111111111111111111111111111"
+  source_snapshot_hash: "2222222222222222222222222222222222222222222222222222222222222222"
+```
+
+Los valores son fixtures documentales. En un paquete real todos deberán
+provenir del evento `PLAN_APPROVED` y del sobre observado persistido antes de
+generar el paquete. Ningún campo podrá quedar vacío, ser inferido después de la
+generación o sustituirse mediante datos de una aprobación posterior.
+
+Este vínculo reproduce datos declarados y observados ya existentes. No concede
+autoridad nueva, no sustituye la validación en vivo de GitHub y no podrá
+contener estados o copias de `IMPLEMENT_APPROVED`, `PUSH_APPROVED` o
+`MERGE_APPROVED`.
+
+El hash se calculará sobre una representación canónica que excluya
+únicamente el propio campo `package_hash`.
+
+#### Entradas que forman parte de la identidad del paquete
+
+La identidad del paquete incluirá:
+
+- snapshot fuente;
+- issue y su revisión observada;
 - plan;
 - criterios;
 - archivos autorizados;
 - archivos prohibidos;
 - base SHA;
-- aprobación;
+- perfiles y Skills fijados como entrada;
+- `plan_approval_binding`;
+- versión del esquema y de la canonicalización.
 
-invalidará el paquete y obligará a generar uno nuevo.
+Un cambio en cualquiera de estas entradas, la edición o eliminación de la
+aprobación de plan vinculada, o la emisión de un nuevo
+`PLAN_APPROVED`, invalidará el paquete y obligará a generar uno nuevo.
+
+El mero transcurso del tiempo no modificará el paquete. Si
+`PLAN_APPROVED` expira, se bloqueará el efecto. Para continuar será
+necesario un nuevo evento de aprobación y, al cambiar el vínculo, un nuevo
+paquete.
+
+Todo paquete nuevo requerirá una nueva aprobación de implementación.
+Una aprobación no se trasladará entre hashes.
 
 #### Canonicalización del work package
 
-La representación canónica usada para calcular el hash obedecerá estas reglas:
+La representación canónica usada para calcular el hash obedecerá estas
+reglas:
 
 ```text
 ENCODING=UTF-8
@@ -679,35 +812,120 @@ PATHS=NORMALIZED_RELATIVE_PATHS
 PACKAGE_HASH_FIELD=EXCLUDED_FROM_HASH_INPUT
 ```
 
-Los strings no sufrirán normalizaciones semánticas implícitas. Los números,
-booleanos y valores nulos conservarán su tipo. Se rechazarán rutas absolutas,
-segmentos `..`, separadores ambiguos y claves duplicadas. La serialización
-canónica será implementada por una única función versionada y cubierta por
-vectores de prueba compartidos entre generador y validador.
+Los strings no sufrirán normalizaciones semánticas implícitas. Los
+números, booleanos y valores nulos conservarán su tipo. Se rechazarán rutas
+absolutas, segmentos `..`, separadores ambiguos y claves duplicadas. La
+serialización canónica será implementada por una única función
+versionada y cubierta por vectores de prueba compartidos entre generador y
+validador.
 
-#### Algoritmo de invalidación
+#### Invalidación del paquete y guardas externas
 
-Antes de cada efecto externo y después de cada espera relevante, el orquestador
-volverá a obtener y comparar:
+Para la primera versión, la revisión fuente del Issue se representará mediante
+`ISSUE_BODY_HASH`, no mediante `Issue.updatedAt`.
+
+`ISSUE_BODY_HASH` será:
+
+```text
+SHA256(UTF8(EXACT_GITHUB_ISSUE_BODY))
+```
+
+`EXACT_GITHUB_ISSUE_BODY` será el valor exacto del campo `body` recuperado
+mediante la API. No se aplicarán `trim`, adición o eliminación de newline,
+normalización Unicode, conversión de finales de línea ni transformación de
+Markdown antes de calcular el hash.
+
+`SOURCE_SNAPSHOT_HASH` será el hash de la representación canónica versionada de
+todas las fuentes que autorizan el plan e incluirá, como mínimo:
+
+```text
+repository
+issue_number
+issue_body_hash
+authorized_source_references
+authorized_source_hashes
+plan_hash
+base_sha
+snapshot_schema_version
+```
+
+La representación canónica seguirá las mismas reglas de UTF-8, orden de claves,
+preservación de tipos y rechazo de claves duplicadas utilizadas por el work
+package.
+
+```text
+ISSUE_UPDATED_AT_IS_PACKAGE_IDENTITY=NO
+ISSUE_UPDATED_AT_IS_INVALIDATION_GUARD=NO
+ISSUE_COMMENT_ACTIVITY_AFFECTS_ISSUE_BODY_HASH=NO
+ISSUE_COMMENT_ACTIVITY_AFFECTS_SOURCE_SNAPSHOT_HASH=NO
+DOWNSTREAM_APPROVAL_COMMENT_MUTATES_PACKAGE=NO
+DOWNSTREAM_APPROVAL_COMMENT_REGENERATES_PACKAGE=NO
+ISSUE_BODY_CHANGE_INVALIDATES_PACKAGE=YES
+AUTHORIZED_SOURCE_CHANGE_INVALIDATES_PACKAGE=YES
+PLAN_APPROVAL_SOURCE_SNAPSHOT_HASH == WORK_PACKAGE_SOURCE_SNAPSHOT_HASH
+WORK_PACKAGE_ISSUE_BODY_HASH == SOURCE_SNAPSHOT_ISSUE_BODY_HASH
+```
+
+Antes de cada efecto externo y después de cada espera relevante, el
+orquestador volverá a obtener y comparar las entradas protegidas del paquete:
 
 ```text
 SOURCE_SNAPSHOT_HASH
 ISSUE_BODY_HASH
-ISSUE_UPDATED_AT
 PLAN_HASH
 BASE_SHA
 AUTHORIZED_FILES_HASH
-APPROVAL_EVENT_ID
-APPROVAL_COMMENT_UPDATED_AT
+PLAN_APPROVAL_EVENT_ID
+PLAN_APPROVAL_COMMENT_ID
+PLAN_APPROVAL_COMMENT_UPDATED_AT
 PACKAGE_HASH
 ```
 
-La comparación se realizará contra el snapshot persistido del run. Si cualquiera
-de estos valores difiere, si el comentario fue editado, si la aprobación expiró,
-si cambió el conjunto de archivos o si el paquete ya no reproduce su hash, el
-run pasará a estado bloqueado o cuarentena según el momento del fallo. No se
-intentará regenerar silenciosamente el paquete ni trasladar una aprobación a la
-nueva versión.
+La comparación se realizará contra el snapshot persistido del run. Si una
+entrada protegida difiere, si el paquete no reproduce su hash o si la
+aprobación de plan vinculada fue editada, eliminada, reemplazada o ya no es
+verificable, el run pasará a estado bloqueado o cuarentena según el momento
+del fallo. No se regenerará silenciosamente el paquete ni se trasladará una
+aprobación a la nueva versión.
+
+Crear, editar, eliminar, expirar o sustituir comentarios de
+`IMPLEMENT_APPROVED`, `PUSH_APPROVED` o `MERGE_APPROVED` no cambiará
+`ISSUE_BODY_HASH`, `SOURCE_SNAPSHOT_HASH` ni `package_hash`. Estas operaciones
+solo afectarán la guarda externa asociada al efecto correspondiente.
+
+Una edición real del body del Issue sí cambiará `ISSUE_BODY_HASH`, invalidará el
+snapshot fuente y bloqueará el run. El orquestador no regenerará el paquete de
+forma automática; deberá volver a planificación y obtener las aprobaciones
+requeridas para los nuevos hashes.
+
+Las aprobaciones posteriores se comprobarán como guardas externas específicas
+para el efecto solicitado:
+
+```text
+IMPLEMENT_EFFECT:
+  IMPLEMENT_APPROVAL_EVENT_ID
+  IMPLEMENT_APPROVAL_COMMENT_UPDATED_AT
+  IMPLEMENT_APPROVAL_EXPIRES_AT
+  IMPLEMENT_APPROVAL_PACKAGE_HASH
+
+PUSH_EFFECT:
+  PUSH_APPROVAL_EVENT_ID
+  PUSH_APPROVAL_COMMENT_UPDATED_AT
+  PUSH_APPROVAL_EXPIRES_AT
+  PUSH_APPROVAL_PACKAGE_HASH
+
+MANUAL_MERGE_DECISION:
+  MERGE_APPROVAL_EVENT_ID
+  MERGE_APPROVAL_COMMENT_UPDATED_AT
+  MERGE_APPROVAL_EXPIRES_AT
+  MERGE_APPROVAL_PULL_REQUEST_NUMBER
+  MERGE_APPROVAL_PULL_REQUEST_HEAD_SHA
+```
+
+Solo se validará el grupo aplicable al efecto solicitado. Una edición,
+eliminación, expiración o discordancia de una aprobación posterior
+bloqueará el efecto dependiente, pero no modificará ni regenerará por sí
+sola el work package.
 
 ### 9. Worktrees
 
@@ -1218,33 +1436,40 @@ Si solo se consigue `MANUAL_ONLY`, la Fase 16 queda bloqueada.
 
 ### Amenazas y mitigaciones
 
-| Amenaza                              | Mitigación                                                             |
-| ------------------------------------ | ---------------------------------------------------------------------- |
-| Prosa interpretada como autorización | Eventos estructurados y actor allowlisted                              |
-| Autoaprobación del orquestador       | Principal distinto del aprobador y rechazo por identidad efectiva      |
-| Metadatos GitHub autodeclarados      | Sobre observado desde la API, separado del cuerpo                      |
-| Paradoja de hash al aceptar el ADR   | Hash candidato y final con transición determinista solo de estado      |
-| Aprobación replay                    | Nonce, hashes, issue y vigencia                                        |
-| TOCTOU sobre SHA o issue             | Revalidación inmediatamente antes del efecto                           |
-| CI o revisión de un SHA obsoleto     | Vinculación exacta entre commit autorizado, PR, remote head y checks   |
-| Command injection                    | Spawn sin shell y argumentos allowlisted                               |
-| Path traversal                       | Resolución real de ruta, raíz permitida y rechazo de enlaces inseguros |
-| Symlink escape                       | `realpath` y comprobación antes de cada escritura                      |
-| Doble ejecución                      | Lease transaccional e idempotency key única                            |
-| Proceso zombi                        | Heartbeat, PID y expiración controlada                                 |
-| SDK comprometido                     | Versión fijada, fuente oficial, hashes y entorno aislado               |
-| Prompt injection                     | Contenido no concede permisos ni cambia políticas                      |
-| Agent tool escalation                | Deny-by-default, hooks y validación externa                            |
-| Codex modifica archivos              | Sandbox read-only y comparación de Git                                 |
-| Salida falsa o malformada            | Esquema estricto y evidencia independiente                             |
-| Fuga de secretos                     | Entorno mínimo, redacción y sin dumps                                  |
-| Disco lleno                          | Cuotas, límites y parada segura                                        |
-| Corrupción SQLite                    | Backups, integrity check y cuarentena                                  |
-| Borrado destructivo                  | Sin cleanup automático                                                 |
-| Modificación de main                 | Rechazo por rama y worktree                                            |
-| Modificación del PR #7               | Rama, SHA y rutas protegidas                                           |
-| Bypass del merge humano              | Ningún puerto o comando de merge implementado                          |
-| Acceso productivo                    | Sin credenciales ni endpoints de producción                            |
+| Amenaza                                         | Mitigación                                                                                         |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Prosa interpretada como autorización            | Eventos estructurados y actor allowlisted                                                          |
+| Autoaprobación del orquestador                  | Principal distinto del aprobador y rechazo por identidad efectiva                                  |
+| Metadatos GitHub autodeclarados                 | Sobre observado desde la API, separado del cuerpo                                                  |
+| Paradoja de hash al aceptar el ADR              | Hash candidato y final con transición determinista solo de estado                                  |
+| Circularidad paquete/aprobación                 | Paquete previo y aprobaciones posteriores externas vinculadas por hash                             |
+| Aprobación replay                               | Nonce, hashes, issue y vigencia                                                                    |
+| TOCTOU sobre SHA o fuentes                      | Hash exacto del body y fuentes, más revalidación inmediatamente antes de cada efecto               |
+| CI o revisión de un SHA obsoleto                | Vinculación exacta entre commit autorizado, PR, remote head y checks                               |
+| Auto-invalidación por comentarios del Issue     | Hash del body exacto; `updatedAt` y actividad de comentarios excluidos de la identidad del paquete |
+| Cambio real del body después de aprobar el plan | Recalcular `ISSUE_BODY_HASH`, invalidar snapshot y volver a planificación                          |
+| Merge manual sin aprobación específica          | `MERGE_APPROVED` vigente y vinculado a PR/head como guarda obligatoria                             |
+| Cambio del head después de aprobar merge        | Invalidación de revisión, CI y `MERGE_APPROVED`; nueva autorización requerida                      |
+| Merge observado sin autorización válida         | Cuarentena, preservación de evidencia y prohibición de transición a `DONE`                         |
+| Cierre prematuro del Issue #24                  | PR #25 documental, Issue abierto hasta implementación, pilotos y recuperación                      |
+| Command injection                               | Spawn sin shell y argumentos allowlisted                                                           |
+| Path traversal                                  | Resolución real de ruta, raíz permitida y rechazo de enlaces inseguros                             |
+| Symlink escape                                  | `realpath` y comprobación antes de cada escritura                                                  |
+| Doble ejecución                                 | Lease transaccional e idempotency key única                                                        |
+| Proceso zombi                                   | Heartbeat, PID y expiración controlada                                                             |
+| SDK comprometido                                | Versión fijada, fuente oficial, hashes y entorno aislado                                           |
+| Prompt injection                                | Contenido no concede permisos ni cambia políticas                                                  |
+| Agent tool escalation                           | Deny-by-default, hooks y validación externa                                                        |
+| Codex modifica archivos                         | Sandbox read-only y comparación de Git                                                             |
+| Salida falsa o malformada                       | Esquema estricto y evidencia independiente                                                         |
+| Fuga de secretos                                | Entorno mínimo, redacción y sin dumps                                                              |
+| Disco lleno                                     | Cuotas, límites y parada segura                                                                    |
+| Corrupción SQLite                               | Backups, integrity check y cuarentena                                                              |
+| Borrado destructivo                             | Sin cleanup automático                                                                             |
+| Modificación de main                            | Rechazo por rama y worktree                                                                        |
+| Modificación del PR #7                          | Rama, SHA y rutas protegidas                                                                       |
+| Bypass del merge humano                         | Ningún puerto o comando de merge implementado                                                      |
+| Acceso productivo                               | Sin credenciales ni endpoints de producción                                                        |
 
 ## Consecuencias positivas
 
@@ -1502,6 +1727,44 @@ guardar o commitear, el blob resultante deberá reproducir
 edición posterior del comentario, un cambio de base SHA o una auditoría distinta
 invalidará la aceptación y exigirá una nueva auditoría y un nuevo evento.
 
+## Alcance de integración del ADR y continuidad de la Fase 16
+
+La integración de este ADR acepta únicamente la decisión arquitectónica y los
+límites de seguridad del orquestador.
+
+Para este bootstrap:
+
+```text
+ISSUE_24_REMAINS_OPEN_AFTER_ADR_MERGE=YES
+PR_25_IS_DOCUMENTATION_ONLY=YES
+PR_25_MERGE_COMPLETES_ORCHESTRATOR_IMPLEMENTATION=NO
+PR_25_MERGE_CLOSES_ISSUE_24=NO
+PR_25_MERGE_CLOSES_PHASE_16=NO
+```
+
+El PR #25 no contiene la implementación del orquestador, sus adaptadores,
+persistencia, máquina de estados, pilotos P0–P5 ni prueba de recuperación.
+
+La fusión del PR #25 no autoriza cerrar el Issue #24 ni declarar completada la
+Fase 16.
+
+El Issue #24 permanecerá abierto hasta que se hayan implementado y verificado,
+como mínimo:
+
+- núcleo local del orquestador;
+- persistencia y leases;
+- contratos de aprobaciones;
+- máquina de estados;
+- generador y validador del work package;
+- adaptadores autorizados;
+- pilotos P0–P5;
+- piloto ANKLO exclusivamente documental;
+- prueba de recuperación;
+- criterios de salida de la Fase 16.
+
+La descripción o el cuerpo del PR #25 no deberá incluir una palabra clave que
+cierre automáticamente el Issue #24.
+
 ## Criterios para aceptar este ADR
 
 - El threat model cubre los límites reales.
@@ -1516,6 +1779,12 @@ invalidará la aceptación y exigirá una nueva auditoría y un nuevo evento.
   administrativa humana.
 - Cada aprobación de push vincula explícitamente repositorio, remoto, rama,
   commit y package hash.
+- El work package incorpora únicamente un vínculo inmutable al
+  `PLAN_APPROVED` previo a su generación; las aprobaciones de implementación,
+  push y merge permanecen fuera del paquete.
+- La secuencia normativa es plan aprobado, paquete canonicalizado,
+  `IMPLEMENT_APPROVED` vinculado al `package_hash` y despacho después de
+  validar ambas entidades sin alterar el paquete.
 - La persistencia SQLite soporta leases atómicos, restricciones de unicidad,
   verificación de integridad, migraciones versionadas y backup previo.
 - Las verificaciones son herméticas, no instalan ni resuelven paquetes durante
@@ -1538,6 +1807,22 @@ invalidará la aceptación y exigirá una nueva auditoría y un nuevo evento.
 - La primera versión observa PR creados manualmente y vincula revisión, remote
   head, PR head y CI al mismo commit autorizado.
 - La implementación puede dividirse en cambios pequeños y revisables.
+- El ejemplo normativo de `PLAN_APPROVED` contiene valores no vacíos, cumple su
+  esquema específico y no incluye `authorized_files_hash` ni `package_hash`.
+- Los ejemplos de vínculos persistidos usan fixtures válidos y declaran
+  expresamente que no conceden autoridad.
+- `ISSUE_BODY_HASH` se calcula sobre el body exacto y la actividad de comentarios
+  no cambia la identidad del paquete.
+- `ISSUE_UPDATED_AT` no forma parte del hash, identidad o invalidación del work
+  package.
+- La edición real del body o de una fuente autorizada invalida el snapshot y
+  exige volver a planificación.
+- `MERGE_APPROVED` vigente, no editado y vinculado al PR y `head SHA` exactos es
+  una guarda obligatoria para `READY_FOR_HUMAN_MERGE`.
+- Un merge observado sin aprobación válida produce cuarentena y no `DONE`.
+- El Issue #24 permanece abierto después de integrar el ADR.
+- El PR #25 es exclusivamente documental y no completa la implementación ni
+  cierra la Fase 16.
 - La segunda auditoría concluye sin hallazgos críticos ni altos y la aceptación
   estructurada referencia una evidencia resoluble, no editada y verificable por
   hash, además del hash candidato y el hash final determinista del ADR aceptado.
