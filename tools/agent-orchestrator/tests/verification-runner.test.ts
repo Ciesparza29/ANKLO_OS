@@ -1,131 +1,139 @@
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
-import { VerificationRunner } from "../src/verification-runner.ts";
+import {
+  sanitizeVerificationOutput,
+  VerificationRunner,
+} from "../src/verification-runner.ts";
+import { WorktreeManager } from "../src/worktree.ts";
 
-const tempDirs: string[] = [];
+const projectRoot = realpathSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../../.."),
+);
+const temporaryDirectories: string[] = [];
 
-function createTempDir(prefix = "anklo-runner-test-"): string {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
-  tempDirs.push(dir);
-  return dir;
+function git(cwd: string, args: readonly string[]): string {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    shell: false,
+  });
+  if (result.status !== 0) throw new Error(result.stderr);
+  return result.stdout.trim();
+}
+
+function createDocsWorktree(): {
+  root: string;
+  main: string;
+  worktree: string;
+  head: string;
+} {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "anklo-runner-test-")));
+  temporaryDirectories.push(root);
+  const main = join(root, "main");
+  const worktree = join(root, "worktree");
+  mkdirSync(join(main, "docs"), { recursive: true });
+  git(main, ["init", "-b", "main"]);
+  git(main, ["config", "user.email", "test@anklo.local"]);
+  git(main, ["config", "user.name", "Test User"]);
+  git(main, [
+    "remote",
+    "add",
+    "origin",
+    "https://github.com/Ciesparza29/ANKLO_OS.git",
+  ]);
+  writeFileSync(join(main, "README.md"), "# Test\n", "utf8");
+  writeFileSync(join(main, "docs", "README.md"), "# Docs\n", "utf8");
+  writeFileSync(
+    join(main, "package.json"),
+    JSON.stringify(
+      {
+        packageManager: "pnpm@11.7.0",
+        devDependencies: {
+          prettier: "3.9.5",
+          eslint: "9.39.4",
+          typescript: "5.9.3",
+          vitest: "4.1.10",
+        },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  symlinkSync(join(projectRoot, "node_modules"), join(main, "node_modules"));
+  git(main, [
+    "add",
+    "README.md",
+    "docs/README.md",
+    "package.json",
+    "node_modules",
+  ]);
+  git(main, ["commit", "-m", "docs fixture"]);
+  const head = git(main, ["rev-parse", "HEAD"]);
+  git(main, ["worktree", "add", "-b", "feat/docs", worktree, head]);
+  return { root, main, worktree, head };
 }
 
 afterEach(() => {
-  while (tempDirs.length > 0) {
-    const dir = tempDirs.pop();
-    if (dir) rmSync(dir, { recursive: true, force: true });
+  while (temporaryDirectories.length > 0) {
+    const directory = temporaryDirectories.pop();
+    if (directory) rmSync(directory, { recursive: true, force: true });
   }
 });
 
-describe("Allowlisted Verification Runner (ADR-0010 Section 13)", () => {
-  it("registers default allowlisted profiles", () => {
-    const runner = new VerificationRunner();
+describe("closed verification runner", () => {
+  it("exposes exactly docs-only and code-standard without registration", () => {
+    const repo = createDocsWorktree();
+    const manager = new WorktreeManager({
+      allowlistedRepository: "Ciesparza29/ANKLO_OS",
+      allowlistedWorktrees: [repo.worktree],
+      allowedParentDirectories: [repo.root],
+      protectedWorktreePaths: [repo.main],
+    });
+    const runner = new VerificationRunner(manager);
     expect(runner.getProfile("docs-only").name).toBe("docs-only");
-    expect(runner.getProfile("code-standard").name).toBe("code-standard");
-    expect(runner.getProfile("full-verify").name).toBe("full-verify");
+    expect(
+      runner.getProfile("code-standard").commands.map((item) => item.tool),
+    ).toEqual(["prettier", "eslint", "architecture", "typescript", "vitest"]);
+    expect("registerProfile" in runner).toBe(false);
+    expect(() => runner.getProfile("full-verify" as "docs-only")).toThrow();
   });
 
-  it("throws UNAUTHORIZED_VERIFICATION_PROFILE when requesting unlisted profiles", () => {
-    const runner = new VerificationRunner();
-    expect(() => runner.getProfile("arbitrary-cmd")).toThrow(
-      /not in the allowlist/,
+  it("executes docs-only in the exact clean worktree and records versions", async () => {
+    const repo = createDocsWorktree();
+    const manager = new WorktreeManager({
+      allowlistedRepository: "Ciesparza29/ANKLO_OS",
+      allowlistedWorktrees: [repo.worktree],
+      allowedParentDirectories: [repo.root],
+      protectedWorktreePaths: [repo.main],
+    });
+    const result = await new VerificationRunner(manager).runProfile(
+      "docs-only",
+      repo.worktree,
+      repo.head,
     );
-    expect(() => runner.runProfile("rm -rf /", "/tmp")).toThrow(
-      /not in the allowlist/,
-    );
+    expect(result.success).toBe(true);
+    expect(result.retries).toBe(0);
+    expect(result.toolVersions.prettier).toBe("3.9.5");
+    expect(result.beforeEvidence.headSha).toBe(result.afterEvidence.headSha);
   });
 
-  it("validates registered profile names and commands strictly", () => {
-    const runner = new VerificationRunner();
-    expect(() =>
-      runner.registerProfile({
-        name: "",
-        description: "empty name",
-        commands: [],
-      }),
-    ).toThrow(/cannot be empty/);
-
-    expect(() =>
-      runner.registerProfile({
-        name: "dangerous",
-        description: "shell operators",
-        commands: [
-          {
-            executable: "sh; rm -rf /",
-            args: [],
-            timeoutMs: 1000,
-            maxOutputBytes: 1000,
-            failurePolicy: "ABORT",
-          },
-        ],
-      }),
-    ).toThrow(/Invalid executable name/);
-  });
-
-  it("executes allowlisted profile and returns structured result", () => {
-    const cwd = createTempDir();
-    const runner = new VerificationRunner([
-      {
-        name: "test-echo",
-        description: "simple echo test",
-        commands: [
-          {
-            executable: "node",
-            args: ["-e", "console.log('verification success')"],
-            timeoutMs: 5000,
-            maxOutputBytes: 1024,
-            failurePolicy: "ABORT",
-          },
-        ],
-      },
-    ]);
-
-    const res = runner.runProfile("test-echo", cwd);
-    expect(res.profileName).toBe("test-echo");
-    expect(res.success).toBe(true);
-    expect(res.aborted).toBe(false);
-    expect(res.results.length).toBe(1);
-    const firstResult = res.results[0];
-    expect(firstResult).toBeDefined();
-    if (!firstResult) return;
-    expect(firstResult.exitCode).toBe(0);
-    expect(firstResult.stdout.trim()).toBe("verification success");
-  });
-
-  it("aborts execution when command fails under ABORT policy", () => {
-    const cwd = createTempDir();
-    const runner = new VerificationRunner([
-      {
-        name: "test-abort",
-        description: "failing command test",
-        commands: [
-          {
-            executable: "node",
-            args: ["-e", "process.exit(1)"],
-            timeoutMs: 5000,
-            maxOutputBytes: 1024,
-            failurePolicy: "ABORT",
-          },
-          {
-            executable: "node",
-            args: ["-e", "console.log('should not run')"],
-            timeoutMs: 5000,
-            maxOutputBytes: 1024,
-            failurePolicy: "ABORT",
-          },
-        ],
-      },
-    ]);
-
-    const res = runner.runProfile("test-abort", cwd);
-    expect(res.success).toBe(false);
-    expect(res.aborted).toBe(true);
-    expect(res.results.length).toBe(1);
-    const firstResult = res.results[0];
-    expect(firstResult).toBeDefined();
-    if (!firstResult) return;
-    expect(firstResult.exitCode).toBe(1);
+  it("redacts common credentials before results can be persisted", () => {
+    expect(
+      sanitizeVerificationOutput(
+        "Authorization: Bearer abcdefghijklmnopqrstuvwxyz ghp_abcdefghijklmnopqrstuvwxyz sk-abcdefghijklmnopqrstuvwxyz",
+      ),
+    ).not.toMatch(/abcdefghijklmnopqrstuvwxyz/u);
   });
 });

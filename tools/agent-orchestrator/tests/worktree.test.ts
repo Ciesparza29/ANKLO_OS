@@ -1,140 +1,166 @@
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { WorktreeManager } from "../src/worktree.ts";
 
-const tempDirs: string[] = [];
+const temporaryDirectories: string[] = [];
 
-function createTempGitRepo(name = "test-repo"): string {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "anklo-wt-test-")));
-  tempDirs.push(dir);
-  const repoDir = join(dir, name);
-  spawnSync("mkdir", ["-p", repoDir]);
-  spawnSync("git", ["init", "-b", "feat/test-branch"], { cwd: repoDir });
-  spawnSync("git", ["config", "user.email", "test@anklo.local"], {
-    cwd: repoDir,
+function git(cwd: string, args: readonly string[]): string {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    shell: false,
   });
-  spawnSync("git", ["config", "user.name", "Test User"], { cwd: repoDir });
-  spawnSync("touch", ["README.md"], { cwd: repoDir });
-  spawnSync("git", ["add", "README.md"], { cwd: repoDir });
-  spawnSync("git", ["commit", "-m", "initial commit"], { cwd: repoDir });
-  return repoDir;
+  if (result.status !== 0) throw new Error(result.stderr);
+  return result.stdout.trim();
+}
+
+function createRepository(): {
+  root: string;
+  main: string;
+  worktree: string;
+  head: string;
+} {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "anklo-wt-test-")));
+  temporaryDirectories.push(root);
+  const main = join(root, "main");
+  const worktree = join(root, "implementation");
+  spawnSync("mkdir", ["-p", main]);
+  git(main, ["init", "-b", "main"]);
+  git(main, ["config", "user.email", "test@anklo.local"]);
+  git(main, ["config", "user.name", "Test User"]);
+  git(main, [
+    "remote",
+    "add",
+    "origin",
+    "https://github.com/Ciesparza29/ANKLO_OS.git",
+  ]);
+  writeFileSync(join(main, "README.md"), "test\n", "utf8");
+  git(main, ["add", "README.md"]);
+  git(main, ["commit", "-m", "initial"]);
+  const head = git(main, ["rev-parse", "HEAD"]);
+  git(main, ["worktree", "add", "-b", "feat/test-branch", worktree, head]);
+  return { root, main, worktree, head };
+}
+
+function managerFor(
+  repo: ReturnType<typeof createRepository>,
+): WorktreeManager {
+  return new WorktreeManager({
+    allowlistedRepository: "Ciesparza29/ANKLO_OS",
+    allowlistedWorktrees: [repo.worktree],
+    allowedParentDirectories: [repo.root],
+    protectedWorktreePaths: [repo.main],
+  });
 }
 
 afterEach(() => {
-  while (tempDirs.length > 0) {
-    const dir = tempDirs.pop();
-    if (dir) rmSync(dir, { recursive: true, force: true });
+  while (temporaryDirectories.length > 0) {
+    const directory = temporaryDirectories.pop();
+    if (directory) rmSync(directory, { recursive: true, force: true });
   }
 });
 
-describe("Worktree Controls (ADR-0010 Section 9)", () => {
-  it("validates allowlisted worktree access and captures git evidence", () => {
-    const repoDir = createTempGitRepo();
-    const headSha = spawnSync("git", ["rev-parse", "HEAD"], {
-      cwd: repoDir,
-      encoding: "utf8",
-    }).stdout.trim();
-
-    const manager = new WorktreeManager({
-      allowlistedRepository: "Ciesparza29/ANKLO_OS",
-      allowlistedWorktrees: [repoDir],
-    });
-
-    const evidence = manager.validateWorktreeAccess(repoDir, headSha);
-    expect(evidence.headSha).toBe(headSha);
+describe("safe worktree manager", () => {
+  it("requires an allowlisted registered worktree at the exact base SHA", () => {
+    const repo = createRepository();
+    const evidence = managerFor(repo).validateWorktreeAccess(
+      repo.worktree,
+      repo.head,
+    );
+    expect(evidence.headSha).toBe(repo.head);
     expect(evidence.branch).toBe("feat/test-branch");
+    expect(evidence.registeredWorktree).toBe(true);
     expect(evidence.isClean).toBe(true);
-    expect(evidence.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
-  it("rejects non-allowlisted worktree paths", () => {
-    const repoDir = createTempGitRepo();
-    const headSha = spawnSync("git", ["rev-parse", "HEAD"], {
-      cwd: repoDir,
-      encoding: "utf8",
-    }).stdout.trim();
-
-    const manager = new WorktreeManager({
-      allowlistedRepository: "Ciesparza29/ANKLO_OS",
-      allowlistedWorktrees: ["/some/other/path"],
-    });
-
-    expect(() => manager.validateWorktreeAccess(repoDir, headSha)).toThrow(
-      /not allowlisted/,
-    );
-  });
-
-  it("refuses to work on main/master or PR #7 branch", () => {
-    const repoDir = createTempGitRepo();
-    const headSha = spawnSync("git", ["rev-parse", "HEAD"], {
-      cwd: repoDir,
-      encoding: "utf8",
-    }).stdout.trim();
-
-    const manager = new WorktreeManager({
-      allowlistedRepository: "Ciesparza29/ANKLO_OS",
-      allowlistedWorktrees: [repoDir],
-    });
-
-    spawnSync("git", ["checkout", "-b", "main"], { cwd: repoDir });
-    expect(() => manager.validateWorktreeAccess(repoDir, headSha)).toThrow(
-      /main or master branch/,
-    );
-
-    spawnSync("git", ["checkout", "-b", "pr-7"], { cwd: repoDir });
-    expect(() => manager.validateWorktreeAccess(repoDir, headSha)).toThrow(
-      /PR #7 branch/,
-    );
-  });
-
-  it("forbids destructive git operations (reset, clean, rebase, force push, delete)", () => {
-    const manager = new WorktreeManager({
-      allowlistedRepository: "Ciesparza29/ANKLO_OS",
-      allowlistedWorktrees: [],
-    });
-
+  it("rejects ancestry-only, dirty, detached and main-clone targets", () => {
+    const repo = createRepository();
+    const manager = managerFor(repo);
+    writeFileSync(join(repo.worktree, "next.txt"), "next\n", "utf8");
+    git(repo.worktree, ["add", "next.txt"]);
+    git(repo.worktree, ["commit", "-m", "next"]);
     expect(() =>
-      manager.assertNoDestructiveOperation("git reset --hard"),
-    ).toThrow(/strictly forbidden/);
-    expect(() => manager.assertNoDestructiveOperation("git clean -fd")).toThrow(
-      /strictly forbidden/,
-    );
-    expect(() =>
-      manager.assertNoDestructiveOperation("git rebase main"),
-    ).toThrow(/strictly forbidden/);
-    expect(() =>
-      manager.assertNoDestructiveOperation("git push --force origin"),
-    ).toThrow(/strictly forbidden/);
+      manager.validateWorktreeAccess(repo.worktree, repo.head),
+    ).toThrow(/exact base SHA/u);
 
-    expect(() => manager.reset()).toThrow(/strictly forbidden/);
-    expect(() => manager.clean()).toThrow(/strictly forbidden/);
-    expect(() => manager.rebase()).toThrow(/strictly forbidden/);
-    expect(() => manager.forcePush()).toThrow(/strictly forbidden/);
-    expect(() => manager.deleteWorktree()).toThrow(/strictly forbidden/);
-    expect(() => manager.deleteBranch()).toThrow(/strictly forbidden/);
+    const nextHead = git(repo.worktree, ["rev-parse", "HEAD"]);
+    writeFileSync(join(repo.worktree, "dirty.txt"), "dirty\n", "utf8");
+    expect(() =>
+      manager.validateWorktreeAccess(repo.worktree, nextHead),
+    ).toThrow(/must be clean/u);
+    rmSync(join(repo.worktree, "dirty.txt"));
+    git(repo.worktree, ["checkout", "--detach"]);
+    expect(() =>
+      manager.validateWorktreeAccess(repo.worktree, nextHead),
+    ).toThrow(/Detached HEAD/u);
+
+    const mainManager = new WorktreeManager({
+      allowlistedRepository: "Ciesparza29/ANKLO_OS",
+      allowlistedWorktrees: [repo.main],
+      allowedParentDirectories: [repo.root],
+    });
+    expect(() =>
+      mainManager.validateWorktreeAccess(repo.main, repo.head),
+    ).toThrow(/primary clone/u);
   });
 
-  it("records evidence before and after action execution", () => {
-    const repoDir = createTempGitRepo();
-    const headSha = spawnSync("git", ["rev-parse", "HEAD"], {
-      cwd: repoDir,
-      encoding: "utf8",
-    }).stdout.trim();
+  it("rejects repository and parent mismatches", () => {
+    const repo = createRepository();
+    const wrongRepository = new WorktreeManager({
+      allowlistedRepository: "other/repository",
+      allowlistedWorktrees: [repo.worktree],
+      allowedParentDirectories: [repo.root],
+    });
+    expect(() =>
+      wrongRepository.validateWorktreeAccess(repo.worktree, repo.head),
+    ).toThrow(/not allowlisted/u);
 
+    const wrongParent = new WorktreeManager({
+      allowlistedRepository: "Ciesparza29/ANKLO_OS",
+      allowlistedWorktrees: [repo.worktree],
+      allowedParentDirectories: [join(repo.root, "elsewhere")],
+    });
+    expect(() =>
+      wrongParent.validateWorktreeAccess(repo.worktree, repo.head),
+    ).toThrow(/parent directory/u);
+  });
+
+  it("compares all before/after Git evidence", () => {
+    const repo = createRepository();
+    const manager = managerFor(repo);
+    const record = manager.recordEvidenceBeforeAndAfter(
+      repo.worktree,
+      repo.head,
+      () => "complete",
+    );
+    expect(record.result).toBe("complete");
+    expect(() =>
+      manager.assertEvidenceUnchanged(record.before, {
+        ...record.after,
+        branch: "feat/changed",
+      }),
+    ).toThrow(/evidence changed/u);
+  });
+
+  it("creates only a collision-free worktree from a clean exact main source", () => {
+    const repo = createRepository();
+    const second = join(repo.root, "second");
     const manager = new WorktreeManager({
       allowlistedRepository: "Ciesparza29/ANKLO_OS",
-      allowlistedWorktrees: [repoDir],
+      allowlistedWorktrees: [second],
+      allowedParentDirectories: [repo.root],
+      protectedWorktreePaths: [repo.main, repo.worktree],
     });
-
-    const rec = manager.recordEvidenceBeforeAndAfter(repoDir, headSha, () => {
-      return "action-completed";
+    const evidence = manager.createWorktree({
+      sourceRepositoryPath: repo.main,
+      targetPath: second,
+      targetBranch: "feat/second",
+      baseSha: repo.head,
     });
-
-    expect(rec.before.headSha).toBe(headSha);
-    expect(rec.result).toBe("action-completed");
-    expect(rec.after.headSha).toBe(headSha);
+    expect(evidence.branch).toBe("feat/second");
+    expect(evidence.headSha).toBe(repo.head);
   });
 });
