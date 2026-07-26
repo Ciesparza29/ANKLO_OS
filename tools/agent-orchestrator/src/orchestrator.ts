@@ -126,6 +126,24 @@ export function openStateStore(
   return SqliteStateStore.open(resolveStateDatabasePath(config, overridePath));
 }
 
+export function openStateStoreReadOnly(
+  config: OrchestratorConfig,
+  overridePath?: string,
+): SqliteStateStore {
+  return SqliteStateStore.openReadOnly(
+    resolveStateDatabasePath(config, overridePath),
+  );
+}
+
+export function openStateStoreForRecovery(
+  config: OrchestratorConfig,
+  overridePath?: string,
+): SqliteStateStore {
+  return SqliteStateStore.openForRecovery(
+    resolveStateDatabasePath(config, overridePath),
+  );
+}
+
 export function isProcessAlive(pid: number): boolean {
   if (!Number.isSafeInteger(pid) || pid <= 0) return false;
   try {

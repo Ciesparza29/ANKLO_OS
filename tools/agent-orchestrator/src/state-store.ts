@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,7 +10,7 @@ import {
   type RunState,
 } from "./state-machine.ts";
 
-const STATE_SCHEMA_VERSION = 2;
+const STATE_SCHEMA_VERSION = 3;
 const BUSY_TIMEOUT_MS = 5_000;
 
 export type RunRecord = Readonly<{
@@ -31,6 +31,7 @@ export type RunRecord = Readonly<{
   packageHash: string | null;
   pullRequestNumber: number | null;
   pullRequestHeadSha: string | null;
+  revalidationEpoch: number;
   createdAt: string;
   updatedAt: string;
 }>;
@@ -56,7 +57,23 @@ export type RuntimeDiagnostics = Readonly<{
   integrityCheck: "ok";
 }>;
 
+export type AuditEventRecord = Readonly<{
+  sequence: number;
+  eventId: string;
+  schemaVersion: string;
+  correlationId: string;
+  runId: string | null;
+  eventType: string;
+  actorType: "SYSTEM" | "HUMAN" | "ORCHESTRATOR" | "AGENT";
+  actorId: string | null;
+  result: "OK" | "DENIED" | "ERROR" | "QUARANTINED";
+  evidenceRef: string | null;
+  payload: unknown;
+  createdAt: string;
+}>;
+
 export interface StateStore {
+  readonly readOnly: boolean;
   integrityCheck(): void;
   runtimeDiagnostics(): RuntimeDiagnostics;
   assertEffectsAllowed(runId?: string): void;
@@ -71,6 +88,9 @@ export interface StateStore {
     correlationId: string;
     now: Date;
   }): RunRecord;
+  recoverFromQuarantine(input: { reason: string; now: Date }): {
+    recovered: boolean;
+  };
   createRun(input: {
     runId: string;
     repository: string;
@@ -138,9 +158,110 @@ export interface StateStore {
     runId: string;
     observedAt: Date;
   }): { recorded: boolean };
-  listAuditEvents(runId: string): readonly Readonly<Record<string, unknown>>[];
+  listAuditEvents(runId: string): readonly AuditEventRecord[];
   close(): void;
 }
+
+const SCHEMA_SPEC = {
+  tables: {
+    schema_meta: ["singleton_id", "version", "migration_state", "applied_at"],
+    runs: [
+      "run_id",
+      "repository",
+      "issue_number",
+      "state",
+      "idempotency_key",
+      "base_sha",
+      "plan_hash",
+      "source_snapshot_hash",
+      "target_repository",
+      "target_remote",
+      "target_branch",
+      "target_head_sha",
+      "worktree_id",
+      "authorized_files_hash",
+      "package_hash",
+      "pull_request_number",
+      "pull_request_head_sha",
+      "created_at",
+      "updated_at",
+      "revalidation_epoch",
+    ],
+    transitions: [
+      "sequence",
+      "run_id",
+      "from_state",
+      "to_state",
+      "reason",
+      "correlation_id",
+      "created_at",
+    ],
+    leases: [
+      "lease_id",
+      "kind",
+      "run_id",
+      "issue_number",
+      "worktree_id",
+      "status",
+      "holder_pid",
+      "acquired_at",
+      "expires_at",
+      "heartbeat_at",
+      "released_at",
+    ],
+    approvals: [
+      "approval_event_id",
+      "nonce",
+      "effect",
+      "run_id",
+      "approval_kind",
+      "repository",
+      "issue_number",
+      "expires_at",
+      "body_json",
+      "approval_comment_id",
+      "approval_author_login",
+      "approval_comment_created_at",
+      "approval_comment_updated_at",
+      "observed_at",
+      "revalidation_epoch",
+    ],
+    audit_events: [
+      "sequence",
+      "event_id",
+      "schema_version",
+      "correlation_id",
+      "run_id",
+      "event_type",
+      "actor_type",
+      "actor_id",
+      "result",
+      "evidence_ref",
+      "payload_json",
+      "created_at",
+    ],
+    control_flags: ["scope", "active", "reason", "updated_at"],
+    quarantine_events: [
+      "sequence",
+      "run_id",
+      "reason",
+      "correlation_id",
+      "created_at",
+    ],
+  },
+  foreignKeys: {
+    transitions: [{ from: "run_id", table: "runs" }],
+    leases: [{ from: "run_id", table: "runs" }],
+    approvals: [{ from: "run_id", table: "runs" }],
+    audit_events: [{ from: "run_id", table: "runs" }],
+    quarantine_events: [{ from: "run_id", table: "runs" }],
+  },
+  uniqueIndexes: [
+    "one_active_issue_lease",
+    "one_active_worktree_lease",
+    "audit_events_event_id",
+  ],
+} as const;
 
 type DbRow = Record<string, string | number | null>;
 
@@ -212,6 +333,7 @@ function toRun(row: DbRow): RunRecord {
       row.pull_request_head_sha === null
         ? null
         : String(row.pull_request_head_sha),
+    revalidationEpoch: Number(row.revalidation_epoch),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   });
@@ -240,32 +362,66 @@ function toLease(row: DbRow): LeaseRecord {
   });
 }
 
+function toAuditEvent(row: DbRow): AuditEventRecord {
+  return Object.freeze({
+    sequence: Number(row.sequence),
+    eventId: String(row.event_id),
+    schemaVersion: String(row.schema_version),
+    correlationId: String(row.correlation_id),
+    runId: row.run_id === null ? null : String(row.run_id),
+    eventType: String(row.event_type),
+    actorType: String(row.actor_type) as AuditEventRecord["actorType"],
+    actorId: row.actor_id === null ? null : String(row.actor_id),
+    result: String(row.result) as AuditEventRecord["result"],
+    evidenceRef: row.evidence_ref === null ? null : String(row.evidence_ref),
+    payload: JSON.parse(String(row.payload_json)) as unknown,
+    createdAt: String(row.created_at),
+  });
+}
+
 export class SqliteStateStore implements StateStore {
   readonly #db: DatabaseSync;
   readonly #databasePath: string;
   readonly #quarantineMarkerPath: string | null;
+  readonly #readOnly: boolean;
 
-  private constructor(databasePath: string) {
+  private constructor(
+    databasePath: string,
+    mode: "normal" | "readOnly" | "recovery" = "normal",
+  ) {
     this.#databasePath = databasePath;
     this.#quarantineMarkerPath =
       databasePath === ":memory:" ? null : `${databasePath}.quarantine.json`;
+    this.#readOnly = mode === "readOnly";
 
-    if (this.#quarantineMarkerPath && existsSync(this.#quarantineMarkerPath)) {
+    if (
+      mode === "normal" &&
+      this.#quarantineMarkerPath &&
+      existsSync(this.#quarantineMarkerPath)
+    ) {
       throw new OrchestratorError(
         "PERSISTENT_KILL_SWITCH_ACTIVE",
         "State store has a persistent quarantine marker; effects are blocked",
         { details: { marker: this.#quarantineMarkerPath } },
       );
     }
-    if (databasePath !== ":memory:") {
+    if (databasePath !== ":memory:" && mode !== "readOnly") {
       mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
     }
 
     this.#db = new DatabaseSync(databasePath);
     try {
-      this.#initialize();
+      if (mode === "readOnly") {
+        this.#initializeReadOnly();
+      } else if (mode === "recovery") {
+        this.#initializeForRecovery();
+      } else {
+        this.#initialize();
+      }
     } catch (error) {
-      this.#persistFatalMarker(error);
+      if (mode === "normal") {
+        this.#persistFatalMarker(error);
+      }
       try {
         this.#db.close();
       } catch {
@@ -276,7 +432,19 @@ export class SqliteStateStore implements StateStore {
   }
 
   static open(databasePath: string): SqliteStateStore {
-    return new SqliteStateStore(databasePath);
+    return new SqliteStateStore(databasePath, "normal");
+  }
+
+  static openReadOnly(databasePath: string): SqliteStateStore {
+    return new SqliteStateStore(databasePath, "readOnly");
+  }
+
+  static openForRecovery(databasePath: string): SqliteStateStore {
+    return new SqliteStateStore(databasePath, "recovery");
+  }
+
+  get readOnly(): boolean {
+    return this.#readOnly;
   }
 
   #persistFatalMarker(error: unknown): void {
@@ -320,6 +488,19 @@ export class SqliteStateStore implements StateStore {
     }
   }
 
+  #initializeReadOnly(): void {
+    this.#db.exec("PRAGMA query_only = ON;");
+    this.#db.exec("PRAGMA foreign_keys = ON;");
+    this.#db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
+  }
+
+  #initializeForRecovery(): void {
+    this.#db.exec("PRAGMA foreign_keys = ON;");
+    this.#db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
+    this.#db.exec("PRAGMA journal_mode = WAL;");
+    this.#verifyPragmas();
+  }
+
   #initialize(): void {
     this.#db.exec("PRAGMA foreign_keys = ON;");
     this.#db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS};`);
@@ -350,6 +531,8 @@ export class SqliteStateStore implements StateStore {
       }
       this.#createSchema();
       this.#db.exec(`PRAGMA user_version = ${STATE_SCHEMA_VERSION};`);
+    } else if (userVersion === 2) {
+      this.#migrateV2toV3();
     } else if (userVersion !== STATE_SCHEMA_VERSION) {
       throw new OrchestratorError(
         "STATE_STORE_SCHEMA_UNSUPPORTED",
@@ -359,6 +542,7 @@ export class SqliteStateStore implements StateStore {
     }
 
     this.#verifySchema();
+    this.#verifyStructuralSchema();
     this.#verifyPragmas();
     this.integrityCheck();
   }
@@ -393,7 +577,8 @@ export class SqliteStateStore implements StateStore {
         pull_request_number INTEGER,
         pull_request_head_sha TEXT,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        revalidation_epoch INTEGER NOT NULL DEFAULT 1
       );
 
       CREATE TABLE transitions (
@@ -448,17 +633,25 @@ export class SqliteStateStore implements StateStore {
         approval_comment_created_at TEXT NOT NULL,
         approval_comment_updated_at TEXT NOT NULL,
         observed_at TEXT NOT NULL,
+        revalidation_epoch INTEGER NOT NULL,
         UNIQUE(run_id, effect)
       );
 
       CREATE TABLE audit_events (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id TEXT NOT NULL,
+        schema_version TEXT NOT NULL DEFAULT '1.0',
         correlation_id TEXT NOT NULL,
         run_id TEXT REFERENCES runs(run_id),
         event_type TEXT NOT NULL,
+        actor_type TEXT NOT NULL DEFAULT 'SYSTEM' CHECK(actor_type IN ('SYSTEM', 'HUMAN', 'ORCHESTRATOR', 'AGENT')),
+        actor_id TEXT,
+        result TEXT NOT NULL DEFAULT 'OK' CHECK(result IN ('OK', 'DENIED', 'ERROR', 'QUARANTINED')),
+        evidence_ref TEXT,
         payload_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE UNIQUE INDEX audit_events_event_id ON audit_events(event_id);
 
       CREATE TABLE control_flags (
         scope TEXT PRIMARY KEY,
@@ -475,6 +668,171 @@ export class SqliteStateStore implements StateStore {
         created_at TEXT NOT NULL
       );
     `);
+  }
+
+  #migrateV2toV3(): void {
+    const preCheck = scalarString(
+      this.#db.prepare("PRAGMA integrity_check").get(),
+    );
+    if (preCheck !== "ok") {
+      throw new OrchestratorError(
+        "STATE_STORE_INTEGRITY_FAILED",
+        "Pre-migration integrity check failed",
+        { details: { result: preCheck } },
+      );
+    }
+
+    if (this.#databasePath !== ":memory:") {
+      this.#backupDatabase();
+    }
+
+    this.#withImmediate(() => {
+      this.#db.exec(
+        "ALTER TABLE runs ADD COLUMN revalidation_epoch INTEGER NOT NULL DEFAULT 1;",
+      );
+      this.#db.exec(
+        "ALTER TABLE approvals ADD COLUMN revalidation_epoch INTEGER NOT NULL DEFAULT 1;",
+      );
+
+      this.#db.exec("ALTER TABLE audit_events ADD COLUMN event_id TEXT;");
+      this.#db.exec(
+        "ALTER TABLE audit_events ADD COLUMN schema_version TEXT NOT NULL DEFAULT '1.0';",
+      );
+      this.#db.exec(
+        "ALTER TABLE audit_events ADD COLUMN actor_type TEXT NOT NULL DEFAULT 'SYSTEM';",
+      );
+      this.#db.exec("ALTER TABLE audit_events ADD COLUMN actor_id TEXT;");
+      this.#db.exec(
+        "ALTER TABLE audit_events ADD COLUMN result TEXT NOT NULL DEFAULT 'OK';",
+      );
+      this.#db.exec("ALTER TABLE audit_events ADD COLUMN evidence_ref TEXT;");
+
+      const rows = this.#db
+        .prepare("SELECT sequence FROM audit_events WHERE event_id IS NULL")
+        .all() as unknown[];
+      const updateStmt = this.#db.prepare(
+        "UPDATE audit_events SET event_id = ? WHERE sequence = ?",
+      );
+      for (const row of rows) {
+        updateStmt.run(randomUUID(), Number(asRow(row).sequence));
+      }
+
+      this.#db.exec(
+        "CREATE UNIQUE INDEX audit_events_event_id ON audit_events(event_id);",
+      );
+
+      this.#db.exec(
+        `UPDATE schema_meta SET version = ${STATE_SCHEMA_VERSION}, applied_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE singleton_id = 1`,
+      );
+
+      this.#db.exec(`PRAGMA user_version = ${STATE_SCHEMA_VERSION};`);
+    });
+  }
+
+  #backupDatabase(): void {
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const backupPath = `${this.#databasePath}.backup-v2-${timestamp}`;
+    const escaped = backupPath.replace(/'/g, "''");
+    this.#db.exec(`VACUUM INTO '${escaped}'`);
+
+    const backup = new DatabaseSync(backupPath);
+    try {
+      const integrity = scalarString(
+        backup.prepare("PRAGMA integrity_check").get(),
+      );
+      if (integrity !== "ok") {
+        throw new OrchestratorError(
+          "STATE_STORE_BACKUP_INTEGRITY_FAILED",
+          "Backup integrity check failed",
+          { details: { backupPath, integrity } },
+        );
+      }
+      const version = scalarNumber(backup.prepare("PRAGMA user_version").get());
+      if (version !== 2) {
+        throw new OrchestratorError(
+          "STATE_STORE_BACKUP_VERSION_MISMATCH",
+          "Backup version does not match expected pre-migration version",
+          { details: { backupPath, expected: 2, actual: version } },
+        );
+      }
+    } finally {
+      backup.close();
+    }
+  }
+
+  #verifyStructuralSchema(): void {
+    const tables = (
+      this.#db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+        )
+        .all() as unknown[]
+    ).map((row) => String(asRow(row).name));
+
+    for (const tableName of Object.keys(SCHEMA_SPEC.tables)) {
+      if (!tables.includes(tableName)) {
+        throw new OrchestratorError(
+          "STATE_STORE_SCHEMA_STRUCTURAL_MISMATCH",
+          `Required table '${tableName}' is missing`,
+          { details: { missingTable: tableName } },
+        );
+      }
+    }
+
+    for (const [tableName, requiredColumns] of Object.entries(
+      SCHEMA_SPEC.tables,
+    )) {
+      const columns = (
+        this.#db.prepare(`PRAGMA table_info('${tableName}')`).all() as unknown[]
+      ).map((row) => String(asRow(row).name));
+      for (const col of requiredColumns) {
+        if (!columns.includes(col)) {
+          throw new OrchestratorError(
+            "STATE_STORE_SCHEMA_STRUCTURAL_MISMATCH",
+            `Required column '${col}' is missing from table '${tableName}'`,
+            { details: { table: tableName, missingColumn: col } },
+          );
+        }
+      }
+    }
+
+    for (const [tableName, fks] of Object.entries(SCHEMA_SPEC.foreignKeys)) {
+      const existingFks = (
+        this.#db
+          .prepare(`PRAGMA foreign_key_list('${tableName}')`)
+          .all() as unknown[]
+      ).map((row) => ({
+        from: String(asRow(row).from),
+        table: String(asRow(row).table),
+      }));
+      for (const required of fks) {
+        const found = existingFks.some(
+          (fk) => fk.from === required.from && fk.table === required.table,
+        );
+        if (!found) {
+          throw new OrchestratorError(
+            "STATE_STORE_SCHEMA_STRUCTURAL_MISMATCH",
+            `Required foreign key from '${tableName}.${required.from}' to '${required.table}' is missing`,
+            { details: { table: tableName, missingFk: required } },
+          );
+        }
+      }
+    }
+
+    for (const indexName of SCHEMA_SPEC.uniqueIndexes) {
+      const idx = this.#db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
+        )
+        .get(indexName);
+      if (!idx) {
+        throw new OrchestratorError(
+          "STATE_STORE_SCHEMA_STRUCTURAL_MISMATCH",
+          `Required unique index '${indexName}' is missing`,
+          { details: { missingIndex: indexName } },
+        );
+      }
+    }
   }
 
   #verifySchema(): void {
@@ -580,20 +938,41 @@ export class SqliteStateStore implements StateStore {
     eventType: string;
     payload: Readonly<Record<string, unknown>>;
     now: Date;
-  }): void {
+    actorType?: AuditEventRecord["actorType"];
+    actorId?: string | null;
+    result?: AuditEventRecord["result"];
+    evidenceRef?: string | null;
+  }): string {
+    const eventId = randomUUID();
+    const payloadJson = JSON.stringify(input.payload);
+    try {
+      JSON.parse(payloadJson);
+    } catch {
+      throw new OrchestratorError(
+        "AUDIT_PAYLOAD_INVALID",
+        "Audit payload is not valid JSON",
+      );
+    }
     this.#db
       .prepare(
         `INSERT INTO audit_events(
-          correlation_id, run_id, event_type, payload_json, created_at
-        ) VALUES (?, ?, ?, ?, ?)`,
+          event_id, schema_version, correlation_id, run_id, event_type,
+          actor_type, actor_id, result, evidence_ref, payload_json, created_at
+        ) VALUES (?, '1.0', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
+        eventId,
         input.correlationId,
         input.runId,
         input.eventType,
-        JSON.stringify(input.payload),
+        input.actorType ?? "SYSTEM",
+        input.actorId ?? null,
+        input.result ?? "OK",
+        input.evidenceRef ?? null,
+        payloadJson,
         input.now.toISOString(),
       );
+    return eventId;
   }
 
   #isControlActive(scope: string): boolean {
@@ -604,6 +983,12 @@ export class SqliteStateStore implements StateStore {
   }
 
   assertEffectsAllowed(runId?: string): void {
+    if (this.#readOnly) {
+      throw new OrchestratorError(
+        "READ_ONLY_MODE",
+        "State store is open in read-only mode; all mutating effects are blocked",
+      );
+    }
     if (this.#quarantineMarkerPath && existsSync(this.#quarantineMarkerPath)) {
       throw new OrchestratorError(
         "PERSISTENT_KILL_SWITCH_ACTIVE",
@@ -732,6 +1117,91 @@ export class SqliteStateStore implements StateStore {
     return this.#withImmediate(() => this.#quarantineRunInTransaction(input));
   }
 
+  recoverFromQuarantine(input: { reason: string; now: Date }): {
+    recovered: boolean;
+  } {
+    if (!input.reason || input.reason.trim().length === 0) {
+      throw new OrchestratorError(
+        "RECOVERY_REASON_REQUIRED",
+        "Recovery requires a non-empty reason",
+      );
+    }
+
+    const integrityResult = scalarString(
+      this.#db.prepare("PRAGMA integrity_check").get(),
+    );
+    if (integrityResult !== "ok") {
+      this.#appendAudit({
+        correlationId: "recovery",
+        runId: null,
+        eventType: "QUARANTINE_RECOVERY_FAILED",
+        payload: { reason: input.reason, integrity: integrityResult },
+        now: input.now,
+        result: "ERROR",
+      });
+      throw new OrchestratorError(
+        "STATE_STORE_INTEGRITY_FAILED",
+        "Recovery blocked: integrity check failed",
+        { details: { result: integrityResult } },
+      );
+    }
+
+    try {
+      this.#verifyStructuralSchema();
+    } catch (error) {
+      this.#appendAudit({
+        correlationId: "recovery",
+        runId: null,
+        eventType: "QUARANTINE_RECOVERY_FAILED",
+        payload: {
+          reason: input.reason,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        now: input.now,
+        result: "ERROR",
+      });
+      throw error;
+    }
+
+    try {
+      this.#verifyPragmas();
+    } catch (error) {
+      this.#appendAudit({
+        correlationId: "recovery",
+        runId: null,
+        eventType: "QUARANTINE_RECOVERY_FAILED",
+        payload: {
+          reason: input.reason,
+          error: error instanceof Error ? error.message : String(error),
+        },
+        now: input.now,
+        result: "ERROR",
+      });
+      throw error;
+    }
+
+    this.#appendAudit({
+      correlationId: "recovery",
+      runId: null,
+      eventType: "QUARANTINE_RECOVERED",
+      payload: { reason: input.reason },
+      now: input.now,
+    });
+
+    this.#db
+      .prepare(
+        `UPDATE control_flags SET active = 0, reason = ?, updated_at = ?
+         WHERE scope = 'GLOBAL' AND active = 1`,
+      )
+      .run(`Recovery: ${input.reason}`, input.now.toISOString());
+
+    if (this.#quarantineMarkerPath && existsSync(this.#quarantineMarkerPath)) {
+      unlinkSync(this.#quarantineMarkerPath);
+    }
+
+    return { recovered: true };
+  }
+
   createRun(input: {
     runId: string;
     repository: string;
@@ -743,29 +1213,29 @@ export class SqliteStateStore implements StateStore {
     now: Date;
   }): { created: boolean; run: RunRecord } {
     this.assertEffectsAllowed();
-    const existing = this.#db
-      .prepare("SELECT * FROM runs WHERE idempotency_key = ? OR run_id = ?")
-      .get(input.idempotencyKey, input.runId);
-    if (existing) {
-      const run = toRun(asRow(existing));
-      if (
-        run.runId !== input.runId ||
-        run.repository !== input.repository ||
-        run.issueNumber !== input.issueNumber ||
-        run.baseSha !== input.baseSha ||
-        run.planHash !== input.planHash ||
-        run.sourceSnapshotHash !== input.sourceSnapshotHash
-      ) {
-        throw new OrchestratorError(
-          "IDEMPOTENCY_COLLISION",
-          "Existing run belongs to different immutable inputs",
-        );
+    return this.#withImmediate(() => {
+      const existing = this.#db
+        .prepare("SELECT * FROM runs WHERE idempotency_key = ? OR run_id = ?")
+        .get(input.idempotencyKey, input.runId);
+      if (existing) {
+        const run = toRun(asRow(existing));
+        if (
+          run.runId !== input.runId ||
+          run.repository !== input.repository ||
+          run.issueNumber !== input.issueNumber ||
+          run.baseSha !== input.baseSha ||
+          run.planHash !== input.planHash ||
+          run.sourceSnapshotHash !== input.sourceSnapshotHash
+        ) {
+          throw new OrchestratorError(
+            "IDEMPOTENCY_COLLISION",
+            "Existing run belongs to different immutable inputs",
+          );
+        }
+        return { created: false, run };
       }
-      return { created: false, run };
-    }
 
-    const now = input.now.toISOString();
-    this.#withImmediate(() => {
+      const now = input.now.toISOString();
       this.#db
         .prepare(
           `INSERT INTO runs(
@@ -774,9 +1244,9 @@ export class SqliteStateStore implements StateStore {
             target_repository, target_remote, target_branch, target_head_sha,
             worktree_id, authorized_files_hash, package_hash,
             pull_request_number, pull_request_head_sha,
-            created_at, updated_at
+            revalidation_epoch, created_at, updated_at
           ) VALUES (?, ?, ?, 'DRAFT', ?, ?, ?, ?, NULL, NULL, NULL, NULL,
-                    NULL, NULL, NULL, NULL, NULL, ?, ?)`,
+                    NULL, NULL, NULL, NULL, NULL, 1, ?, ?)`,
         )
         .run(
           input.runId,
@@ -802,16 +1272,16 @@ export class SqliteStateStore implements StateStore {
         },
         now: input.now,
       });
-    });
 
-    const run = this.getRun(input.runId);
-    if (!run) {
-      throw new OrchestratorError(
-        "STATE_STORE_WRITE_FAILED",
-        "Run was not persisted",
-      );
-    }
-    return { created: true, run };
+      const run = this.getRun(input.runId);
+      if (!run) {
+        throw new OrchestratorError(
+          "STATE_STORE_WRITE_FAILED",
+          "Run was not persisted",
+        );
+      }
+      return { created: true, run };
+    });
   }
 
   getRun(runId: string): RunRecord | null {
@@ -822,7 +1292,9 @@ export class SqliteStateStore implements StateStore {
     try {
       return toRun(asRow(row));
     } catch (error) {
-      this.#persistFatalMarker(error);
+      if (!this.#readOnly) {
+        this.#persistFatalMarker(error);
+      }
       throw error;
     }
   }
@@ -931,13 +1403,15 @@ export class SqliteStateStore implements StateStore {
   }
 
   #hasCurrentApproval(runId: string, effect: ApprovalKind, now: Date): boolean {
+    const run = this.getRun(runId);
+    if (!run) return false;
     const row = this.#db
       .prepare(
         `SELECT 1 FROM approvals
-         WHERE run_id = ? AND effect = ? AND expires_at > ?
+         WHERE run_id = ? AND effect = ? AND expires_at > ? AND revalidation_epoch = ?
          LIMIT 1`,
       )
-      .get(runId, effect, now.toISOString());
+      .get(runId, effect, now.toISOString(), run.revalidationEpoch);
     return Boolean(row);
   }
 
@@ -986,6 +1460,33 @@ export class SqliteStateStore implements StateStore {
           "TARGET_BINDING_REQUIRED",
           "READY_TO_DISPATCH requires an immutable implementation target binding",
         );
+      }
+
+      if (run.state === "CHANGES_REQUESTED" && input.to === "PLAN_READY") {
+        const newEpoch = run.revalidationEpoch + 1;
+        this.#db
+          .prepare(
+            `UPDATE runs SET
+               revalidation_epoch = ?,
+               target_repository = NULL, target_remote = NULL,
+               target_branch = NULL, target_head_sha = NULL,
+               worktree_id = NULL, authorized_files_hash = NULL,
+               package_hash = NULL
+             WHERE run_id = ?`,
+          )
+          .run(newEpoch, input.runId);
+        this.#appendAudit({
+          correlationId: input.correlationId,
+          runId: input.runId,
+          eventType: "REVALIDATION_EPOCH_INCREMENTED",
+          payload: {
+            from_epoch: run.revalidationEpoch,
+            to_epoch: newEpoch,
+            invalidated_target: true,
+            invalidated_package: true,
+          },
+          now: input.now,
+        });
       }
 
       const now = input.now.toISOString();
@@ -1088,11 +1589,58 @@ export class SqliteStateStore implements StateStore {
         const expiresAt = new Date(
           input.now.getTime() + input.ttlMs,
         ).toISOString();
+
         this.#db
           .prepare(
             "UPDATE leases SET status = 'EXPIRED' WHERE status = 'ACTIVE' AND expires_at <= ?",
           )
           .run(now);
+
+        const expiredOwners = this.#db
+          .prepare(
+            `SELECT DISTINCT run_id FROM leases
+             WHERE status = 'EXPIRED' AND run_id != ? AND released_at IS NULL`,
+          )
+          .all(input.runId) as unknown[];
+
+        for (const ownerRow of expiredOwners) {
+          const ownerId = String(asRow(ownerRow).run_id);
+          this.#db
+            .prepare(
+              `UPDATE leases SET released_at = ?
+               WHERE run_id = ? AND status = 'EXPIRED' AND released_at IS NULL`,
+            )
+            .run(now, ownerId);
+          const ownerRun = this.getRun(ownerId);
+          if (
+            ownerRun &&
+            !TERMINAL_STATES.has(ownerRun.state) &&
+            ownerRun.state !== "BLOCKED"
+          ) {
+            this.#db
+              .prepare(
+                "UPDATE runs SET state = 'BLOCKED', updated_at = ? WHERE run_id = ?",
+              )
+              .run(now, ownerId);
+            this.#db
+              .prepare(
+                `INSERT INTO transitions(run_id, from_state, to_state, reason, correlation_id, created_at)
+                 VALUES (?, ?, 'BLOCKED', 'LEASE_EXPIRED_DURING_ACQUISITION', ?, ?)`,
+              )
+              .run(ownerId, ownerRun.state, input.runId, now);
+          }
+          this.#appendAudit({
+            correlationId: input.runId,
+            runId: ownerId,
+            eventType: "LEASE_EXPIRED_DURING_ACQUISITION",
+            payload: {
+              expired_owner: ownerId,
+              new_requester: input.runId,
+              new_requester_pid: input.holderPid,
+            },
+            now: input.now,
+          });
+        }
 
         const existingIssue = this.#db
           .prepare(
@@ -1121,6 +1669,13 @@ export class SqliteStateStore implements StateStore {
             issueLease.holderPid !== input.holderPid ||
             worktreeLease.holderPid !== input.holderPid
           ) {
+            this.#quarantineRunInTransaction({
+              runId: input.runId,
+              reason:
+                "LEASE_CONFLICT: Issue or worktree is already leased by another run or process",
+              correlationId: input.runId,
+              now: input.now,
+            });
             throw new OrchestratorError(
               "LEASE_CONFLICT",
               "Issue or worktree is already leased by another run or process",
@@ -1256,13 +1811,51 @@ export class SqliteStateStore implements StateStore {
           );
         }
         const leases = active.map((row) => toLease(asRow(row)));
+
+        const now = input.now.toISOString();
+        const nowMs = input.now.getTime();
+        if (leases.some((lease) => Date.parse(lease.expiresAt) <= nowMs)) {
+          this.#db
+            .prepare(
+              `UPDATE leases SET status = 'EXPIRED', released_at = ?
+               WHERE run_id = ? AND status = 'ACTIVE'`,
+            )
+            .run(now, input.runId);
+          this.#db
+            .prepare(
+              "UPDATE runs SET state = 'BLOCKED', updated_at = ? WHERE run_id = ?",
+            )
+            .run(now, input.runId);
+          this.#db
+            .prepare(
+              `INSERT INTO transitions(run_id, from_state, to_state, reason, correlation_id, created_at)
+               VALUES (?, ?, 'BLOCKED', 'HEARTBEAT_AFTER_LEASE_EXPIRY', ?, ?)`,
+            )
+            .run(input.runId, run.state, input.runId, now);
+          this.#appendAudit({
+            correlationId: input.runId,
+            runId: input.runId,
+            eventType: "HEARTBEAT_AFTER_EXPIRY_DENIED",
+            payload: {
+              holder_pid: input.holderPid,
+              expired_leases: leases.map((l) => l.leaseId),
+            },
+            now: input.now,
+            result: "DENIED",
+          });
+          throw new OrchestratorError(
+            "LEASE_EXPIRED_HEARTBEAT_DENIED",
+            "Cannot renew expired leases",
+          );
+        }
+
         if (leases.some((lease) => lease.holderPid !== input.holderPid)) {
           throw new OrchestratorError(
             "LEASE_HOLDER_MISMATCH",
             "Only the current lease holder may renew leases",
           );
         }
-        const now = input.now.toISOString();
+
         const expiresAt = new Date(
           input.now.getTime() + input.ttlMs,
         ).toISOString();
@@ -1609,13 +2202,8 @@ export class SqliteStateStore implements StateStore {
         this.#assertApprovalBinding(run, input.observedApproval, input.effect);
 
         const body = input.observedApproval.body;
-        if (Date.parse(body.expires_at) <= input.observedAt.getTime()) {
-          throw new OrchestratorError(
-            "APPROVAL_EXPIRED",
-            "Approval expired before its effect was recorded",
-          );
-        }
         const bodyJson = JSON.stringify(body);
+
         const existing = this.#db
           .prepare(
             `SELECT * FROM approvals
@@ -1627,6 +2215,7 @@ export class SqliteStateStore implements StateStore {
             String(body.nonce),
             input.observedApproval.approval_comment_id,
           );
+
         if (existing) {
           const row = asRow(existing);
           const exactReplay =
@@ -1642,11 +2231,19 @@ export class SqliteStateStore implements StateStore {
             String(row.approval_comment_created_at) ===
               input.observedApproval.approval_comment_created_at &&
             String(row.approval_comment_updated_at) ===
-              input.observedApproval.approval_comment_updated_at;
+              input.observedApproval.approval_comment_updated_at &&
+            Number(row.revalidation_epoch) === run.revalidationEpoch;
           if (exactReplay) return { recorded: false };
           throw new OrchestratorError(
             "APPROVAL_REPLAY_DENIED",
             "Approval event, nonce or comment was already consumed with different protected data",
+          );
+        }
+
+        if (Date.parse(body.expires_at) <= input.observedAt.getTime()) {
+          throw new OrchestratorError(
+            "APPROVAL_EXPIRED",
+            "Approval expired before its effect was recorded",
           );
         }
 
@@ -1657,8 +2254,8 @@ export class SqliteStateStore implements StateStore {
               repository, issue_number, expires_at, body_json,
               approval_comment_id, approval_author_login,
               approval_comment_created_at, approval_comment_updated_at,
-              observed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              observed_at, revalidation_epoch
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           )
           .run(
             String(body.approval_event_id),
@@ -1675,6 +2272,7 @@ export class SqliteStateStore implements StateStore {
             input.observedApproval.approval_comment_created_at,
             input.observedApproval.approval_comment_updated_at,
             input.observedAt.toISOString(),
+            run.revalidationEpoch,
           );
         this.#appendAudit({
           correlationId: input.runId,
@@ -1715,26 +2313,16 @@ export class SqliteStateStore implements StateStore {
     }
   }
 
-  listAuditEvents(runId: string): readonly Readonly<Record<string, unknown>>[] {
+  listAuditEvents(runId: string): readonly AuditEventRecord[] {
     const rows = this.#db
       .prepare(
-        `SELECT sequence, correlation_id, run_id, event_type, payload_json, created_at
+        `SELECT sequence, event_id, schema_version, correlation_id, run_id,
+                event_type, actor_type, actor_id, result, evidence_ref,
+                payload_json, created_at
          FROM audit_events WHERE run_id = ? ORDER BY sequence ASC`,
       )
       .all(runId) as unknown[];
-    return Object.freeze(
-      rows.map((row) => {
-        const value = asRow(row);
-        return Object.freeze({
-          sequence: Number(value.sequence),
-          correlation_id: String(value.correlation_id),
-          run_id: String(value.run_id),
-          event_type: String(value.event_type),
-          payload: JSON.parse(String(value.payload_json)) as unknown,
-          created_at: String(value.created_at),
-        });
-      }),
-    );
+    return Object.freeze(rows.map((row) => toAuditEvent(asRow(row))));
   }
 
   close(): void {

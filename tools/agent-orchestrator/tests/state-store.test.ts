@@ -112,7 +112,7 @@ describe("SQLite state store", () => {
   it("verifies schema version, WAL, foreign keys, timeout and integrity", () => {
     const { store } = createStore();
     expect(store.runtimeDiagnostics()).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       journalMode: "wal",
       foreignKeys: true,
       busyTimeoutMs: 5000,

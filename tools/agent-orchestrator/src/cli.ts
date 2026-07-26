@@ -23,6 +23,8 @@ import {
   isProcessAlive,
   newRunId,
   openStateStore,
+  openStateStoreReadOnly,
+  openStateStoreForRecovery,
   resolveStateDatabasePath,
 } from "./orchestrator.ts";
 import { assertCapability, DENIED_CAPABILITIES } from "./policy.ts";
@@ -32,6 +34,8 @@ const COMMANDS = [
   "diagnose",
   "plan",
   "state:init",
+  "state:inspect",
+  "state:recover",
   "run:create",
   "run:bind-target",
   "run:transition",
@@ -236,6 +240,81 @@ export async function runCli(
           effects_executed: 0,
         },
       });
+      return 0;
+    }
+
+    if (command === "state:inspect") {
+      assertCapability(config.allowedCapabilities, "STATE_READ");
+      const databasePath = resolveStateDatabasePath(
+        config,
+        parsed.values["state-db"],
+      );
+      const store = openStateStoreReadOnly(config, parsed.values["state-db"]);
+      try {
+        const diagnostics = store.runtimeDiagnostics();
+        writeSuccess({
+          command,
+          dryRun: true,
+          format,
+          data: {
+            state_db: databasePath,
+            read_only: true,
+            schema_version: diagnostics.schemaVersion,
+            journal_mode: diagnostics.journalMode,
+            foreign_keys: diagnostics.foreignKeys,
+            busy_timeout_ms: diagnostics.busyTimeoutMs,
+            integrity_check: diagnostics.integrityCheck,
+          },
+        });
+      } finally {
+        store.close();
+      }
+      return 0;
+    }
+
+    if (command === "state:recover") {
+      assertCapability(config.allowedCapabilities, "STATE_WRITE");
+      if (!apply) {
+        writeSuccess({
+          command,
+          dryRun: true,
+          format,
+          data: {
+            intended_effects: [
+              "verify integrity",
+              "verify structural schema",
+              "verify pragmas",
+              "record recovery audit event",
+              "deactivate kill switch if active",
+              "remove quarantine marker",
+            ],
+            effects_executed: 0,
+          },
+        });
+        return 0;
+      }
+      const reason = requireString(parsed.values.reason, "reason");
+      const store = openStateStoreForRecovery(
+        config,
+        parsed.values["state-db"],
+      );
+      try {
+        const result = store.recoverFromQuarantine({
+          reason,
+          now: new Date(),
+        });
+        writeSuccess({
+          command,
+          dryRun: false,
+          format,
+          data: {
+            recovered: result.recovered,
+            reason,
+          },
+        });
+      } finally {
+        store.close();
+      }
       return 0;
     }
 
