@@ -50,6 +50,38 @@ describe("structured approvals", () => {
     ).toThrow(/do not match/u);
   });
 
+  it.each([
+    "9999-99-99T99:99:99Z",
+    "2026-02-30T12:00:00Z",
+    "2026-07-26T12:00:60Z",
+  ])("rejects impossible UTC timestamp %s", (expiresAt: string) => {
+    expect(() => parseApprovalBody({ ...body, expires_at: expiresAt })).toThrow(
+      /real UTC instant|canonical UTC timestamp/u,
+    );
+  });
+
+  it("rejects impossible observed timestamps", () => {
+    expect(() =>
+      validateObservedApproval(
+        {
+          ...observed,
+          approval_comment_created_at: "2026-02-30T12:00:00Z",
+          approval_comment_updated_at: "2026-02-30T12:00:00Z",
+        },
+        context,
+      ),
+    ).toThrow(/canonical UTC timestamp/u);
+  });
+
+  it("rejects expired approvals", () => {
+    expect(() =>
+      validateObservedApproval(
+        { ...observed, body: { ...body, expires_at: "2026-07-26T12:59:59Z" } },
+        context,
+      ),
+    ).toThrow(/expired/u);
+  });
+
   it("rejects edited comments", () => {
     expect(() =>
       validateObservedApproval(

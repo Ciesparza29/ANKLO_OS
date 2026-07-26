@@ -1,5 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { existsSync, lstatSync, realpathSync } from "node:fs";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  parse,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import type { OrchestratorConfig } from "./contracts.ts";
 import { OrchestratorError } from "./errors.ts";
 import { SqliteStateStore } from "./state-store.ts";
@@ -15,8 +24,77 @@ export function assertKillSwitchOff(
   }
 }
 
+function isWithin(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return (
+    rel === "" ||
+    (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel))
+  );
+}
+
+function assertNoSymlinkComponents(targetPath: string): void {
+  const absolute = resolve(targetPath);
+  const root = parse(absolute).root;
+  const relativePath = absolute.slice(root.length);
+  const parts = relativePath.split(sep).filter(Boolean);
+  let cursor = root;
+
+  for (const part of parts) {
+    cursor = join(cursor, part);
+    if (!existsSync(cursor)) break;
+    if (lstatSync(cursor).isSymbolicLink()) {
+      throw new OrchestratorError(
+        "UNSAFE_RUNTIME_PATH",
+        "Runtime paths must not traverse symbolic links",
+        { details: { path: cursor } },
+      );
+    }
+  }
+}
+
 export function stateDatabasePath(config: OrchestratorConfig): string {
   return join(config.runtimeDir, "state", "orchestrator.sqlite");
+}
+
+export function resolveStateDatabasePath(
+  config: OrchestratorConfig,
+  overridePath?: string,
+): string {
+  const runtimeDir = resolve(config.runtimeDir);
+  const repoRoot = resolve(config.repoRoot);
+  const candidate = resolve(overridePath ?? stateDatabasePath(config));
+
+  if (isWithin(repoRoot, candidate)) {
+    throw new OrchestratorError(
+      "UNSAFE_STATE_PATH",
+      "State storage must remain outside the repository",
+      { details: { candidate, repoRoot } },
+    );
+  }
+  if (!isWithin(runtimeDir, candidate)) {
+    throw new OrchestratorError(
+      "UNSAFE_STATE_PATH",
+      "State storage must remain inside the configured runtime directory",
+      { details: { candidate, runtimeDir } },
+    );
+  }
+
+  assertNoSymlinkComponents(runtimeDir);
+  assertNoSymlinkComponents(dirname(candidate));
+
+  if (existsSync(runtimeDir) && existsSync(dirname(candidate))) {
+    const runtimeReal = realpathSync.native(runtimeDir);
+    const parentReal = realpathSync.native(dirname(candidate));
+    if (!isWithin(runtimeReal, parentReal)) {
+      throw new OrchestratorError(
+        "UNSAFE_STATE_PATH",
+        "Resolved state path escapes the configured runtime directory",
+        { details: { parentReal, runtimeReal } },
+      );
+    }
+  }
+
+  return candidate;
 }
 
 export function deterministicIdempotencyKey(input: {
@@ -45,7 +123,18 @@ export function openStateStore(
   overridePath?: string,
 ): SqliteStateStore {
   assertKillSwitchOff();
-  return SqliteStateStore.open(overridePath ?? stateDatabasePath(config));
+  return SqliteStateStore.open(resolveStateDatabasePath(config, overridePath));
+}
+
+export function isProcessAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "EPERM";
+  }
 }
 
 export function newRunId(): string {

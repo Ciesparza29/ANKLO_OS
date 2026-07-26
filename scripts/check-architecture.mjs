@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 const root = process.cwd();
 const manifests = new Map();
-for (const folder of ["apps", "packages"]) {
+for (const folder of ["apps", "packages", "tools"]) {
   for (const entry of await readdir(join(root, folder), {
     withFileTypes: true,
   })) {
@@ -25,6 +25,7 @@ const allowed = new Map([
   ["@anklo/ui", new Set(["@anklo/contracts"])],
   ["@anklo/contracts", new Set()],
   ["@anklo/config", new Set()],
+  ["@anklo/agent-orchestrator", new Set()],
 ]);
 
 const graph = new Map();

@@ -110,6 +110,8 @@ importers:
 
   packages/ui: {}
 
+  tools/agent-orchestrator: {}
+
 packages:
 
   '@babel/code-frame@7.29.7':

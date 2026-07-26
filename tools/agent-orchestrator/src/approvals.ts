@@ -18,6 +18,8 @@ export type ApprovalKind = (typeof APPROVAL_KINDS)[number];
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
+const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u;
+
 const COMMON_FIELDS = [
   "schema_version",
   "approval_kind",
@@ -96,10 +98,29 @@ function requireIsoDate(
   field: string,
 ): string {
   const value = requireString(record, field);
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value)) {
+  if (!ISO_UTC_PATTERN.test(value)) {
     throw new OrchestratorError(
       "INVALID_APPROVAL",
       `${field} must be an ISO-8601 UTC timestamp`,
+    );
+  }
+
+  const epoch = Date.parse(value);
+  if (!Number.isFinite(epoch)) {
+    throw new OrchestratorError(
+      "INVALID_APPROVAL",
+      `${field} must represent a real UTC instant`,
+    );
+  }
+
+  const canonical = new Date(epoch).toISOString();
+  const normalizedInput = value.includes(".")
+    ? value
+    : value.replace(/Z$/u, ".000Z");
+  if (canonical !== normalizedInput) {
+    throw new OrchestratorError(
+      "INVALID_APPROVAL",
+      `${field} must be a canonical UTC timestamp`,
     );
   }
   return value;
@@ -268,7 +289,16 @@ export function validateObservedApproval(
       "Initial approval must be unedited",
     );
   }
-  if (Date.parse(body.expires_at) <= (context.now ?? new Date()).getTime()) {
+
+  const now = (context.now ?? new Date()).getTime();
+  if (!Number.isFinite(now)) {
+    throw new OrchestratorError(
+      "INVALID_TIME_SOURCE",
+      "Approval validation requires a valid time source",
+    );
+  }
+  const expiresAt = Date.parse(body.expires_at);
+  if (!Number.isFinite(expiresAt) || expiresAt <= now) {
     throw new OrchestratorError("APPROVAL_EXPIRED", "Approval has expired");
   }
 

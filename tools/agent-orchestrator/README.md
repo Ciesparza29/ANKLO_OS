@@ -3,7 +3,7 @@
 CLI local y deny-by-default para despachar trabajo aprobado hacia agentes sin
 conceder capacidad de merge, despliegue, shell arbitrario ni acceso a producción.
 
-## Capacidades implementadas hasta la subfase 16.4
+## Capacidades implementadas hasta la remediación de la subfase 16.4
 
 - CLI local sin listeners de red;
 - configuración estricta con runtime fuera del repositorio;
@@ -11,18 +11,26 @@ conceder capacidad de merge, despliegue, shell arbitrario ni acceso a producció
 - salida humana y JSON versionada;
 - contratos estrictos para `PLAN_APPROVED`, `IMPLEMENT_APPROVED`,
   `PUSH_APPROVED` y `MERGE_APPROVED`;
-- máquina de estados declarativa;
-- SQLite con `WAL`, claves foráneas, `busy_timeout` e `integrity_check`;
+- timestamps UTC semánticamente válidos y canónicos;
+- enlace atómico de cada aprobación con el run y sus datos protegidos;
+- persistencia del cuerpo, sobre observado, nonce y consumo de aprobación;
+- máquina de estados declarativa y replanificación obligatoria tras cambios;
+- SQLite versionado con `WAL`, claves foráneas, `busy_timeout`,
+  `user_version` e `integrity_check` verificados;
 - idempotencia de runs;
+- binding inmutable del target de implementación;
 - leases transaccionales exclusivos por issue y worktree;
+- heartbeat, liberación y recuperación de leases vencidos o con proceso muerto;
 - auditoría append-only;
-- protección contra replay de aprobaciones;
-- kill switch mediante `ANKLO_ORCHESTRATOR_KILL_SWITCH=1`;
+- protección contra replay de event ID, nonce y comentario;
+- kill switch persistente global y por run;
+- cuarentena persistente con preservación de evidencia;
 - bloqueo de estados que todavía dependen de adaptadores GitHub/CI no
   implementados.
 
-El runtime mutable se ubica en `~/.anklo-orchestrator/`. No se almacenan bases,
-leases, paquetes generados ni logs dentro del repositorio o de un worktree.
+El runtime mutable se ubica en `~/.anklo-orchestrator/`. Cualquier override de
+SQLite debe permanecer dentro de ese runtime, fuera del repositorio y sin
+atravesar enlaces simbólicos.
 
 ## Uso
 
@@ -33,8 +41,9 @@ pnpm orchestrator state:init --apply --format json
 ```
 
 Los comandos con efectos permanecen en `dry-run` salvo que reciban `--apply`.
-La transición a estados protegidos exige la aprobación estructurada correspondiente.
-Los estados dependientes de GitHub, CI o merge permanecen bloqueados hasta que
-sus adaptadores y guardas sean implementados y probados.
+La transición a estados protegidos exige la aprobación estructurada vigente y
+vinculada al run exacto. Antes de despacho también debe existir un target de
+implementación inmutable.
 
-No existen comandos de merge, despliegue, push, creación de PR ni shell arbitrario.
+No existen comandos de merge, despliegue, push, creación de PR ni shell
+arbitrario.

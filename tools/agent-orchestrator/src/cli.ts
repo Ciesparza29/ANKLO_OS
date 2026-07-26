@@ -11,14 +11,19 @@ import {
   type OutputFormat,
   type StructuredResult,
 } from "./contracts.ts";
-import { validateObservedApproval } from "./approvals.ts";
+import {
+  APPROVAL_KINDS,
+  validateObservedApproval,
+  type ApprovalKind,
+} from "./approvals.ts";
 import { normalizeError, OrchestratorError } from "./errors.ts";
 import {
   assertKillSwitchOff,
   deterministicIdempotencyKey,
+  isProcessAlive,
   newRunId,
   openStateStore,
-  stateDatabasePath,
+  resolveStateDatabasePath,
 } from "./orchestrator.ts";
 import { assertCapability, DENIED_CAPABILITIES } from "./policy.ts";
 import { isRunState } from "./state-machine.ts";
@@ -28,14 +33,24 @@ const COMMANDS = [
   "plan",
   "state:init",
   "run:create",
+  "run:bind-target",
   "run:transition",
+  "run:quarantine",
   "lease:acquire",
+  "lease:heartbeat",
+  "lease:release",
+  "lease:recover",
   "approval:validate",
+  "safety:activate",
 ] as const;
 type Command = (typeof COMMANDS)[number];
 
 function isCommand(value: string): value is Command {
   return (COMMANDS as readonly string[]).includes(value);
+}
+
+function isApprovalKind(value: string): value is ApprovalKind {
+  return (APPROVAL_KINDS as readonly string[]).includes(value);
 }
 
 function parsePositiveInteger(
@@ -115,6 +130,7 @@ export async function runCli(
 ): Promise<number> {
   let command = "unknown";
   let format: OutputFormat = "human";
+  let attemptedApply = false;
   try {
     const parsed = parseArgs({
       args: [...argv],
@@ -134,8 +150,16 @@ export async function runCli(
         reason: { type: "string" },
         "worktree-id": { type: "string" },
         "ttl-seconds": { type: "string", default: "900" },
+        "holder-pid": { type: "string" },
         "approval-file": { type: "string" },
         effect: { type: "string" },
+        "target-repository": { type: "string" },
+        "target-remote": { type: "string" },
+        "target-branch": { type: "string" },
+        "target-head-sha": { type: "string" },
+        "authorized-files-hash": { type: "string" },
+        "package-hash": { type: "string" },
+        scope: { type: "string" },
       },
     });
 
@@ -157,9 +181,14 @@ export async function runCli(
     const cwd = context.cwd ?? process.cwd();
     const config = await loadConfig(parsed.values.config, cwd);
     const apply = parsed.values.apply;
+    attemptedApply = apply;
 
     if (command === "diagnose") {
       assertCapability(config.allowedCapabilities, "DIAGNOSE");
+      const databasePath = resolveStateDatabasePath(
+        config,
+        parsed.values["state-db"],
+      );
       writeSuccess({
         command,
         dryRun: true,
@@ -168,7 +197,7 @@ export async function runCli(
           repository: config.repository,
           repo_root: config.repoRoot,
           runtime_dir: config.runtimeDir,
-          state_db: parsed.values["state-db"] ?? stateDatabasePath(config),
+          state_db: databasePath,
           node_version: process.versions.node,
           dry_run_default: config.dryRunDefault,
           network_listeners: config.networkListeners,
@@ -199,6 +228,7 @@ export async function runCli(
           intended_effects: [
             "validate structured approval",
             "validate exact base SHA",
+            "bind immutable implementation target",
             "acquire issue and worktree leases",
             "create isolated worktree",
             "generate immutable work package",
@@ -213,8 +243,10 @@ export async function runCli(
 
     if (command === "state:init") {
       assertCapability(config.allowedCapabilities, "STATE_WRITE");
-      const databasePath =
-        parsed.values["state-db"] ?? stateDatabasePath(config);
+      const databasePath = resolveStateDatabasePath(
+        config,
+        parsed.values["state-db"],
+      );
       if (!apply) {
         writeSuccess({
           command,
@@ -225,14 +257,17 @@ export async function runCli(
         return 0;
       }
       const store = openStateStore(config, databasePath);
-      store.integrityCheck();
-      store.close();
-      writeSuccess({
-        command,
-        dryRun: false,
-        format,
-        data: { database_path: databasePath, integrity_check: "ok" },
-      });
+      try {
+        const diagnostics = store.runtimeDiagnostics();
+        writeSuccess({
+          command,
+          dryRun: false,
+          format,
+          data: { database_path: databasePath, ...diagnostics },
+        });
+      } finally {
+        store.close();
+      }
       return 0;
     }
 
@@ -276,23 +311,100 @@ export async function runCli(
         return 0;
       }
       const store = openStateStore(config, parsed.values["state-db"]);
-      const created = store.createRun({
-        runId,
-        repository: config.repository,
-        issueNumber,
-        idempotencyKey,
-        baseSha,
-        planHash,
-        sourceSnapshotHash,
-        now: new Date(),
-      });
-      store.close();
-      writeSuccess({
-        command,
-        dryRun: false,
-        format,
-        data: { created: created.created, run: created.run },
-      });
+      try {
+        const created = store.createRun({
+          runId,
+          repository: config.repository,
+          issueNumber,
+          idempotencyKey,
+          baseSha,
+          planHash,
+          sourceSnapshotHash,
+          now: new Date(),
+        });
+        writeSuccess({
+          command,
+          dryRun: false,
+          format,
+          data: { created: created.created, run: created.run },
+        });
+      } finally {
+        store.close();
+      }
+      return 0;
+    }
+
+    if (command === "run:bind-target") {
+      assertCapability(config.allowedCapabilities, "STATE_WRITE");
+      const runId = requireString(parsed.values["run-id"], "run-id");
+      const targetRepository = requireString(
+        parsed.values["target-repository"],
+        "target-repository",
+      );
+      const targetRemote = requireString(
+        parsed.values["target-remote"],
+        "target-remote",
+      );
+      const targetBranch = requireString(
+        parsed.values["target-branch"],
+        "target-branch",
+      );
+      const targetHeadSha = assertGitSha(
+        requireString(parsed.values["target-head-sha"], "target-head-sha"),
+        "target-head-sha",
+      );
+      const worktreeId = requireString(
+        parsed.values["worktree-id"],
+        "worktree-id",
+      );
+      const authorizedFilesHash = assertSha256(
+        requireString(
+          parsed.values["authorized-files-hash"],
+          "authorized-files-hash",
+        ),
+        "authorized-files-hash",
+      );
+      const packageHash = assertSha256(
+        requireString(parsed.values["package-hash"], "package-hash"),
+        "package-hash",
+      );
+      if (!apply) {
+        writeSuccess({
+          command,
+          dryRun: true,
+          format,
+          data: {
+            run_id: runId,
+            target_repository: targetRepository,
+            target_remote: targetRemote,
+            target_branch: targetBranch,
+            target_head_sha: targetHeadSha,
+            worktree_id: worktreeId,
+            authorized_files_hash: authorizedFilesHash,
+            package_hash: packageHash,
+            effects_executed: 0,
+          },
+        });
+        return 0;
+      }
+      const store = openStateStore(config, parsed.values["state-db"]);
+      try {
+        const run = store.bindImplementationTarget({
+          runId,
+          targetRepository,
+          targetRemote,
+          targetBranch,
+          targetHeadSha,
+          worktreeId,
+          authorizedFilesHash,
+          packageHash,
+          correlationId: runId,
+          now: new Date(),
+        });
+        writeSuccess({ command, dryRun: false, format, data: { run } });
+      } finally {
+        store.close();
+      }
       return 0;
     }
 
@@ -314,15 +426,46 @@ export async function runCli(
         return 0;
       }
       const store = openStateStore(config, parsed.values["state-db"]);
-      const run = store.transitionRun({
-        runId,
-        to,
-        reason,
-        correlationId: runId,
-        now: new Date(),
-      });
-      store.close();
-      writeSuccess({ command, dryRun: false, format, data: { run } });
+      try {
+        const run = store.transitionRun({
+          runId,
+          to,
+          reason,
+          correlationId: runId,
+          now: new Date(),
+        });
+        writeSuccess({ command, dryRun: false, format, data: { run } });
+      } finally {
+        store.close();
+      }
+      return 0;
+    }
+
+    if (command === "run:quarantine") {
+      assertCapability(config.allowedCapabilities, "STATE_WRITE");
+      const runId = requireString(parsed.values["run-id"], "run-id");
+      const reason = requireString(parsed.values.reason, "reason");
+      if (!apply) {
+        writeSuccess({
+          command,
+          dryRun: true,
+          format,
+          data: { run_id: runId, reason, effects_executed: 0 },
+        });
+        return 0;
+      }
+      const store = openStateStore(config, parsed.values["state-db"]);
+      try {
+        const run = store.quarantineRun({
+          runId,
+          reason,
+          correlationId: runId,
+          now: new Date(),
+        });
+        writeSuccess({ command, dryRun: false, format, data: { run } });
+      } finally {
+        store.close();
+      }
       return 0;
     }
 
@@ -338,6 +481,15 @@ export async function runCli(
         parsed.values["ttl-seconds"],
         "ttl-seconds",
       );
+      const holderPid = parsed.values["holder-pid"]
+        ? parsePositiveInteger(parsed.values["holder-pid"], "holder-pid")
+        : process.pid;
+      if (!isProcessAlive(holderPid)) {
+        throw new OrchestratorError(
+          "LEASE_HOLDER_NOT_ALIVE",
+          "holder-pid must identify a live process",
+        );
+      }
       if (!apply) {
         writeSuccess({
           command,
@@ -348,22 +500,170 @@ export async function runCli(
             issue: issueNumber,
             worktree_id: worktreeId,
             ttl_seconds: ttlSeconds,
+            holder_pid: holderPid,
             effects_executed: 0,
           },
         });
         return 0;
       }
       const store = openStateStore(config, parsed.values["state-db"]);
-      const leases = store.acquireDispatchLeases({
-        runId,
-        issueNumber,
-        worktreeId,
-        ttlMs: ttlSeconds * 1000,
-        holderPid: process.pid,
-        now: new Date(),
-      });
-      store.close();
-      writeSuccess({ command, dryRun: false, format, data: leases });
+      try {
+        const leases = store.acquireDispatchLeases({
+          runId,
+          issueNumber,
+          worktreeId,
+          ttlMs: ttlSeconds * 1000,
+          holderPid,
+          now: new Date(),
+        });
+        writeSuccess({ command, dryRun: false, format, data: leases });
+      } finally {
+        store.close();
+      }
+      return 0;
+    }
+
+    if (command === "lease:heartbeat") {
+      assertCapability(config.allowedCapabilities, "LEASE_WRITE");
+      const runId = requireString(parsed.values["run-id"], "run-id");
+      const ttlSeconds = parsePositiveInteger(
+        parsed.values["ttl-seconds"],
+        "ttl-seconds",
+      );
+      const holderPid = parsed.values["holder-pid"]
+        ? parsePositiveInteger(parsed.values["holder-pid"], "holder-pid")
+        : process.pid;
+      if (!isProcessAlive(holderPid)) {
+        throw new OrchestratorError(
+          "LEASE_HOLDER_NOT_ALIVE",
+          "holder-pid must identify a live process",
+        );
+      }
+      if (!apply) {
+        writeSuccess({
+          command,
+          dryRun: true,
+          format,
+          data: {
+            run_id: runId,
+            ttl_seconds: ttlSeconds,
+            holder_pid: holderPid,
+            effects_executed: 0,
+          },
+        });
+        return 0;
+      }
+      const store = openStateStore(config, parsed.values["state-db"]);
+      try {
+        const leases = store.heartbeatDispatchLeases({
+          runId,
+          holderPid,
+          ttlMs: ttlSeconds * 1000,
+          now: new Date(),
+        });
+        writeSuccess({ command, dryRun: false, format, data: { leases } });
+      } finally {
+        store.close();
+      }
+      return 0;
+    }
+
+    if (command === "lease:release") {
+      assertCapability(config.allowedCapabilities, "LEASE_WRITE");
+      const runId = requireString(parsed.values["run-id"], "run-id");
+      const reason = requireString(parsed.values.reason, "reason");
+      const holderPid = parsed.values["holder-pid"]
+        ? parsePositiveInteger(parsed.values["holder-pid"], "holder-pid")
+        : process.pid;
+      if (!isProcessAlive(holderPid)) {
+        throw new OrchestratorError(
+          "LEASE_HOLDER_NOT_ALIVE",
+          "holder-pid must identify a live process",
+        );
+      }
+      if (!apply) {
+        writeSuccess({
+          command,
+          dryRun: true,
+          format,
+          data: {
+            run_id: runId,
+            reason,
+            holder_pid: holderPid,
+            effects_executed: 0,
+          },
+        });
+        return 0;
+      }
+      const store = openStateStore(config, parsed.values["state-db"]);
+      try {
+        const result = store.releaseDispatchLeases({
+          runId,
+          holderPid,
+          reason,
+          now: new Date(),
+        });
+        writeSuccess({ command, dryRun: false, format, data: result });
+      } finally {
+        store.close();
+      }
+      return 0;
+    }
+
+    if (command === "lease:recover") {
+      assertCapability(config.allowedCapabilities, "LEASE_WRITE");
+      if (!apply) {
+        writeSuccess({
+          command,
+          dryRun: true,
+          format,
+          data: { effects_executed: 0 },
+        });
+        return 0;
+      }
+      const store = openStateStore(config, parsed.values["state-db"]);
+      try {
+        const result = store.recoverStaleLeases({
+          now: new Date(),
+          isProcessAlive,
+        });
+        writeSuccess({ command, dryRun: false, format, data: result });
+      } finally {
+        store.close();
+      }
+      return 0;
+    }
+
+    if (command === "safety:activate") {
+      assertCapability(config.allowedCapabilities, "STATE_WRITE");
+      const scope = requireString(parsed.values.scope, "scope");
+      if (scope !== "GLOBAL" && !scope.startsWith("RUN:")) {
+        throw new OrchestratorError(
+          "INVALID_ARGUMENT",
+          "scope must be GLOBAL or RUN:<run-id>",
+        );
+      }
+      const reason = requireString(parsed.values.reason, "reason");
+      if (!apply) {
+        writeSuccess({
+          command,
+          dryRun: true,
+          format,
+          data: { scope, reason, effects_executed: 0 },
+        });
+        return 0;
+      }
+      const store = openStateStore(config, parsed.values["state-db"]);
+      try {
+        const result = store.activateKillSwitch({
+          scope: scope as "GLOBAL" | `RUN:${string}`,
+          reason,
+          now: new Date(),
+        });
+        writeSuccess({ command, dryRun: false, format, data: result });
+      } finally {
+        store.close();
+      }
       return 0;
     }
 
@@ -373,15 +673,54 @@ export async function runCli(
       "approval-file",
     );
     const issueNumber = parsePositiveInteger(parsed.values.issue, "issue");
-    const observed = validateObservedApproval(
-      JSON.parse(await readFile(approvalFile, "utf8")) as unknown,
-      {
-        repository: config.repository,
-        issueNumber,
-        approvedActors: config.approvedActors,
-        orchestratorActor: config.orchestratorActor,
-      },
-    );
+    const runId = requireString(parsed.values["run-id"], "run-id");
+    const effectValue = requireString(parsed.values.effect, "effect");
+    if (!isApprovalKind(effectValue)) {
+      throw new OrchestratorError(
+        "INVALID_ARGUMENT",
+        "effect must be a supported approval kind",
+      );
+    }
+
+    let observed: ReturnType<typeof validateObservedApproval>;
+    try {
+      observed = validateObservedApproval(
+        JSON.parse(await readFile(approvalFile, "utf8")) as unknown,
+        {
+          repository: config.repository,
+          issueNumber,
+          approvedActors: config.approvedActors,
+          orchestratorActor: config.orchestratorActor,
+        },
+      );
+    } catch (error) {
+      if (apply) {
+        try {
+          const store = openStateStore(config, parsed.values["state-db"]);
+          try {
+            const normalized = normalizeError(error);
+            store.quarantineRun({
+              runId,
+              reason: `APPROVAL_REJECTED:${normalized.code}`,
+              correlationId: runId,
+              now: new Date(),
+            });
+          } finally {
+            store.close();
+          }
+        } catch {
+          // Preserve the original validation error.
+        }
+      }
+      throw error;
+    }
+
+    if (effectValue !== observed.body.approval_kind) {
+      throw new OrchestratorError(
+        "APPROVAL_EFFECT_MISMATCH",
+        "effect must exactly match approval_kind",
+      );
+    }
     if (!apply) {
       writeSuccess({
         command,
@@ -395,32 +734,28 @@ export async function runCli(
       });
       return 0;
     }
-    const effect = requireString(parsed.values.effect, "effect");
-    if (effect !== observed.body.approval_kind) {
-      throw new OrchestratorError(
-        "APPROVAL_EFFECT_MISMATCH",
-        "effect must exactly match approval_kind",
-      );
-    }
-    const runId = requireString(parsed.values["run-id"], "run-id");
+
     const store = openStateStore(config, parsed.values["state-db"]);
-    const recorded = store.recordApprovalEffect({
-      approvalEventId: String(observed.body.approval_event_id),
-      effect,
-      runId,
-      observedAt: new Date(),
-    });
-    store.close();
-    writeSuccess({
-      command,
-      dryRun: false,
-      format,
-      data: {
-        approval_kind: observed.body.approval_kind,
-        valid: true,
-        effect_recorded: recorded.recorded,
-      },
-    });
+    try {
+      const recorded = store.recordApprovalEffect({
+        observedApproval: observed,
+        effect: effectValue,
+        runId,
+        observedAt: new Date(),
+      });
+      writeSuccess({
+        command,
+        dryRun: false,
+        format,
+        data: {
+          approval_kind: observed.body.approval_kind,
+          valid: true,
+          effect_recorded: recorded.recorded,
+        },
+      });
+    } finally {
+      store.close();
+    }
     return 0;
   } catch (error) {
     const normalized = normalizeError(error);
@@ -428,7 +763,7 @@ export async function runCli(
       createStructuredResult({
         command,
         result: "ERROR",
-        dryRun: true,
+        dryRun: !attemptedApply,
         errors: [
           {
             code: normalized.code,
