@@ -6,8 +6,8 @@ import { VerificationRunner } from "../src/verification-runner.ts";
 
 const tempDirs: string[] = [];
 
-function createTempDir(name = "test-run"): string {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), "anklo-runner-test-")));
+function createTempDir(prefix = "anklo-runner-test-"): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
   tempDirs.push(dir);
   return dir;
 }
@@ -87,8 +87,11 @@ describe("Allowlisted Verification Runner (ADR-0010 Section 13)", () => {
     expect(res.success).toBe(true);
     expect(res.aborted).toBe(false);
     expect(res.results.length).toBe(1);
-    expect(res.results[0].exitCode).toBe(0);
-    expect(res.results[0].stdout.trim()).toBe("verification success");
+    const firstResult = res.results[0];
+    expect(firstResult).toBeDefined();
+    if (!firstResult) return;
+    expect(firstResult.exitCode).toBe(0);
+    expect(firstResult.stdout.trim()).toBe("verification success");
   });
 
   it("aborts execution when command fails under ABORT policy", () => {
@@ -120,6 +123,9 @@ describe("Allowlisted Verification Runner (ADR-0010 Section 13)", () => {
     expect(res.success).toBe(false);
     expect(res.aborted).toBe(true);
     expect(res.results.length).toBe(1);
-    expect(res.results[0].exitCode).toBe(1);
+    const firstResult = res.results[0];
+    expect(firstResult).toBeDefined();
+    if (!firstResult) return;
+    expect(firstResult.exitCode).toBe(1);
   });
 });
