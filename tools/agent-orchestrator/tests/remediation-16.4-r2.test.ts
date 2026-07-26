@@ -51,7 +51,7 @@ describe("Remediation 16.4-R2 Verification", () => {
   it("enforces schema v3 and audit hardening (ANKLO-16-004, ANKLO-16-006)", () => {
     const { store } = createStore();
     const diag = store.runtimeDiagnostics();
-    expect(diag.schemaVersion).toBe(3);
+    expect(diag.schemaVersion).toBe(5);
 
     const now = new Date("2026-07-26T12:00:00Z");
     store.createRun({
@@ -121,7 +121,7 @@ describe("Remediation 16.4-R2 Verification", () => {
     db.close();
 
     const store = SqliteStateStore.open(dbPath);
-    expect(store.runtimeDiagnostics().schemaVersion).toBe(3);
+    expect(store.runtimeDiagnostics().schemaVersion).toBe(5);
     store.close();
 
     const files = readdirSync(join(dbPath, ".."));
@@ -243,6 +243,18 @@ describe("Remediation 16.4-R2 Verification", () => {
       worktreeId: "wt-1",
       authorizedFilesHash: "3".repeat(64),
       packageHash: "4".repeat(64),
+      planApprovalBinding: {
+        approvalEventId: "evt_1",
+        approvalCommentId: 100,
+        approvalAuthorLogin: "testuser",
+        approvalCommentUpdatedAt: "2026-07-26T00:00:00.000Z",
+        expiresAt: "2026-08-01T00:00:00.000Z",
+        baseSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        planHash:
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        sourceSnapshotHash:
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      },
       correlationId: "corr-bind",
       now,
     });
@@ -395,7 +407,7 @@ describe("Remediation 16.4-R2 Verification", () => {
     recoveryStore.close();
 
     const normalStore = SqliteStateStore.open(path);
-    expect(normalStore.runtimeDiagnostics().schemaVersion).toBe(3);
+    expect(normalStore.runtimeDiagnostics().schemaVersion).toBe(5);
     normalStore.close();
   });
 
@@ -437,7 +449,7 @@ describe("Remediation 16.4-R2 Verification", () => {
     expect(res.status).toBe(0);
     let output = JSON.parse(res.stdout);
     expect(output.data.read_only).toBe(true);
-    expect(output.data.schema_version).toBe(3);
+    expect(output.data.schema_version).toBe(5);
 
     res = runCli(["state:recover", "--config", configPath, "--format", "json"]);
     expect(res.status).toBe(0);

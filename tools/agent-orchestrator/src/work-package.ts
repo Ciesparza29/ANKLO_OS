@@ -1,14 +1,17 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
   realpathSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -82,6 +85,14 @@ export interface PersistWorkPackageInput {
   readonly worktreePath: string;
 }
 
+export type PersistWorkPackageResult = Readonly<{
+  packagePath: string;
+  relativePath: string;
+  byteLength: number;
+  packageHash: string;
+  schemaVersion: string;
+}>;
+
 const PACKAGE_KEYS = [
   "schemaVersion",
   "canonicalizationVersion",
@@ -135,6 +146,153 @@ function assertExactKeys(
     actual.some((key, index) => key !== wanted[index])
   ) {
     fail("INVALID_WORK_PACKAGE_SCHEMA", `${label} has invalid fields`);
+  }
+}
+
+export function validateRunId(value: unknown, field = "runId"): string {
+  if (typeof value !== "string") {
+    fail("INVALID_RUN_ID", `${field} must be a string`);
+  }
+  if (value.length === 0 || value.length > 128) {
+    fail(
+      "INVALID_RUN_ID",
+      `${field} length must be between 1 and 128 characters`,
+    );
+  }
+  if (
+    value === "." ||
+    value === ".." ||
+    value.includes("\0") ||
+    value.includes(" ") ||
+    value.includes("/") ||
+    value.includes("\\") ||
+    value.trim() !== value
+  ) {
+    fail(
+      "INVALID_RUN_ID",
+      `${field} contains forbidden characters or path traversal elements`,
+    );
+  }
+  if (value !== value.normalize("NFC")) {
+    fail(
+      "INVALID_RUN_ID",
+      `${field} contains non-canonical Unicode normalization`,
+    );
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value)) {
+    fail("INVALID_RUN_ID", `${field} does not match strict runId pattern`);
+  }
+  return value;
+}
+
+export function assertPlainDataStructure(value: unknown, path = "root"): void {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    if (typeof value === "number" && !Number.isFinite(value)) {
+      fail(
+        "INVALID_WORK_PACKAGE_SCHEMA",
+        `${path} contains a non-finite number`,
+      );
+    }
+    return;
+  }
+  if (
+    typeof value === "undefined" ||
+    typeof value === "function" ||
+    typeof value === "symbol" ||
+    typeof value === "bigint"
+  ) {
+    fail(
+      "INVALID_WORK_PACKAGE_SCHEMA",
+      `${path} contains forbidden value type: ${typeof value}`,
+    );
+  }
+  if (typeof value !== "object") {
+    fail("INVALID_WORK_PACKAGE_SCHEMA", `${path} contains unsupported type`);
+  }
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype) {
+      fail(
+        "INVALID_WORK_PACKAGE_SCHEMA",
+        `${path} array prototype must be Array.prototype`,
+      );
+    }
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.some((k) => typeof k === "symbol")) {
+      fail("INVALID_WORK_PACKAGE_SCHEMA", `${path} array contains Symbol keys`);
+    }
+    const descLen = Reflect.getOwnPropertyDescriptor(value, "length");
+    if (descLen && (descLen.get !== undefined || descLen.set !== undefined)) {
+      fail(
+        "INVALID_WORK_PACKAGE_SCHEMA",
+        `${path} array length property cannot be an accessor`,
+      );
+    }
+    for (let i = 0; i < value.length; i += 1) {
+      const key = String(i);
+      const desc = Reflect.getOwnPropertyDescriptor(value, key);
+      if (!desc) {
+        fail(
+          "INVALID_WORK_PACKAGE_SCHEMA",
+          `${path} array is sparse (missing index ${key})`,
+        );
+      }
+      if (desc.get !== undefined || desc.set !== undefined) {
+        fail(
+          "INVALID_WORK_PACKAGE_SCHEMA",
+          `${path}[${i}] cannot be a getter or setter`,
+        );
+      }
+      if (!desc.enumerable) {
+        fail("INVALID_WORK_PACKAGE_SCHEMA", `${path}[${i}] must be enumerable`);
+      }
+      assertPlainDataStructure(value[i], `${path}[${i}]`);
+    }
+    if (ownKeys.length !== value.length + 1) {
+      fail(
+        "INVALID_WORK_PACKAGE_SCHEMA",
+        `${path} array has extra unexpected properties`,
+      );
+    }
+    return;
+  }
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) {
+    fail(
+      "INVALID_WORK_PACKAGE_SCHEMA",
+      `${path} object prototype must be Object.prototype or null`,
+    );
+  }
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.some((k) => typeof k === "symbol")) {
+    fail("INVALID_WORK_PACKAGE_SCHEMA", `${path} object contains Symbol keys`);
+  }
+  for (const key of ownKeys) {
+    if (typeof key !== "string") continue;
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      fail(
+        "INVALID_WORK_PACKAGE_SCHEMA",
+        `${path} object contains forbidden special key ${key}`,
+      );
+    }
+    const desc = Reflect.getOwnPropertyDescriptor(value, key);
+    if (desc && (desc.get !== undefined || desc.set !== undefined)) {
+      fail(
+        "INVALID_WORK_PACKAGE_SCHEMA",
+        `${path}.${key} cannot be a getter or setter`,
+      );
+    }
+    if (desc && !desc.enumerable) {
+      fail("INVALID_WORK_PACKAGE_SCHEMA", `${path}.${key} must be enumerable`);
+    }
+    assertPlainDataStructure(
+      (value as Record<string, unknown>)[key],
+      `${path}.${key}`,
+    );
   }
 }
 
@@ -410,7 +568,7 @@ export function computeAuthorizedFilesHash(
     .digest("hex");
 }
 
-function parsePlanApprovalBinding(input: unknown): PlanApprovalBinding {
+export function parsePlanApprovalBinding(input: unknown): PlanApprovalBinding {
   if (!isRecord(input)) {
     fail(
       "INVALID_WORK_PACKAGE_SCHEMA",
@@ -452,6 +610,7 @@ function parseWorkPackage(
   input: unknown,
   requirePackageHash: boolean,
 ): WorkPackage {
+  assertPlainDataStructure(input, "work package");
   if (!isRecord(input)) {
     fail("INVALID_WORK_PACKAGE_SCHEMA", "Work package must be an object");
   }
@@ -509,7 +668,7 @@ function parseWorkPackage(
     canonicalizationVersion: WORK_PACKAGE_CANONICALIZATION_VERSION,
     repository: requireString(input.repository, "repository"),
     issueNumber: requirePositiveInteger(input.issueNumber, "issueNumber"),
-    runId: requireString(input.runId, "runId"),
+    runId: validateRunId(input.runId, "runId"),
     idempotencyKey: requireHash(input.idempotencyKey, "idempotencyKey"),
     issueBodyHash: requireHash(input.issueBodyHash, "issueBodyHash"),
     sourceSnapshotHash: requireHash(
@@ -622,7 +781,9 @@ export function validateWorkPackage(
   }
 }
 
-export function persistWorkPackage(input: PersistWorkPackageInput): string {
+export function persistWorkPackage(
+  input: PersistWorkPackageInput,
+): PersistWorkPackageResult {
   const runtime = resolve(input.runtimeDirectory);
   const repository = realpathSync(input.repositoryRoot);
   const worktree = realpathSync(input.worktreePath);
@@ -643,41 +804,134 @@ export function persistWorkPackage(input: PersistWorkPackageInput): string {
     ...input.workPackage.prohibitedFiles,
   ]);
 
+  const validatedRunId = validateRunId(input.workPackage.runId, "runId");
   const packageDirectory = join(
     runtime,
     "tasks",
     String(input.workPackage.issueNumber),
-    input.workPackage.runId,
+    validatedRunId,
   );
   assertNoSymlinkComponents(dirname(packageDirectory));
   mkdirSync(packageDirectory, { recursive: true, mode: 0o700 });
   assertNoSymlinkComponents(packageDirectory);
+
+  const runtimeRoot = realpathSync(runtime);
+  const relativePath = join(
+    "tasks",
+    String(input.workPackage.issueNumber),
+    validatedRunId,
+    "work-package.json",
+  );
   const packagePath = join(packageDirectory, "work-package.json");
+  if (!isWithin(runtimeRoot, packagePath)) {
+    fail(
+      "WORK_PACKAGE_REPOSITORY_ESCAPE",
+      "Package path escapes runtime directory",
+    );
+  }
+
   const serialized = `${canonicalizeValue(input.workPackage)}\n`;
+  const expectedLength = Buffer.byteLength(serialized, "utf8");
+
+  if (existsSync(packagePath)) {
+    fail(
+      "WORK_PACKAGE_IMMUTABILITY_VIOLATION",
+      `Work package already exists: ${packagePath}`,
+    );
+  }
+
+  const tempPath = join(packageDirectory, `.wp-${randomUUID()}.tmp`);
   let descriptor: number | undefined;
   try {
-    descriptor = openSync(packagePath, "wx", 0o600);
+    descriptor = openSync(tempPath, "wx", 0o600);
     writeFileSync(descriptor, serialized, { encoding: "utf8" });
     fsyncSync(descriptor);
   } catch (error) {
+    if (existsSync(tempPath)) {
+      try {
+        unlinkSync(tempPath);
+      } catch {}
+    }
     fail(
       "WORK_PACKAGE_IMMUTABILITY_VIOLATION",
-      `Work package already exists or could not be persisted: ${String(error)}`,
+      `Could not create temporary work package: ${String(error)}`,
     );
   } finally {
     if (descriptor !== undefined) closeSync(descriptor);
   }
+
+  try {
+    linkSync(tempPath, packagePath);
+  } catch (error) {
+    if (existsSync(tempPath)) {
+      try {
+        unlinkSync(tempPath);
+      } catch {}
+    }
+    fail(
+      "WORK_PACKAGE_IMMUTABILITY_VIOLATION",
+      `Work package already exists or could not be published atomically: ${String(error)}`,
+    );
+  }
+
+  try {
+    const dirFd = openSync(packageDirectory, "r");
+    try {
+      fsyncSync(dirFd);
+    } finally {
+      closeSync(dirFd);
+    }
+  } catch {}
+
+  if (existsSync(tempPath)) {
+    try {
+      unlinkSync(tempPath);
+    } catch {}
+  }
+
   chmodSync(packagePath, 0o400);
 
-  const persisted = JSON.parse(readFileSync(packagePath, "utf8")) as unknown;
-  const parsed = parseWorkPackage(persisted, true);
-  if (parsed.packageHash !== input.workPackage.packageHash) {
+  const finalFd = openSync(packagePath, "r");
+  let finalBytes: Buffer;
+  let byteLength = 0;
+  try {
+    const stat = fstatSync(finalFd);
+    byteLength = stat.size;
+    finalBytes = readFileSync(finalFd);
+  } finally {
+    closeSync(finalFd);
+  }
+
+  if (byteLength !== expectedLength || finalBytes.length !== expectedLength) {
+    fail(
+      "WORK_PACKAGE_AT_REST_MISMATCH",
+      "Persisted package byte length differs from serialized length",
+    );
+  }
+
+  const finalString = finalBytes.toString("utf8");
+  const persisted = JSON.parse(finalString) as unknown;
+  const parsed = parseWorkPackage(persisted, true) as WorkPackage & {
+    readonly packageHash: string;
+  };
+  const observedHash = computePackageHash(parsed);
+  if (
+    parsed.packageHash !== input.workPackage.packageHash ||
+    observedHash !== input.workPackage.packageHash
+  ) {
     fail(
       "WORK_PACKAGE_AT_REST_MISMATCH",
       "Persisted package hash differs from the dispatched package",
     );
   }
-  return packagePath;
+
+  return Object.freeze({
+    packagePath,
+    relativePath,
+    byteLength,
+    packageHash: observedHash,
+    schemaVersion: parsed.schemaVersion,
+  });
 }
 
 export function loadAndValidatePersistedWorkPackage(
@@ -691,4 +945,87 @@ export function loadAndValidatePersistedWorkPackage(
   ) as WorkPackage & { readonly packageHash: string };
   validateWorkPackage(parsed, runSnapshot);
   return Object.freeze(parsed);
+}
+
+export type LoadedPersistedPackage = WorkPackage &
+  Readonly<{
+    packageHash: string;
+    loadedByteLength: number;
+    loadedHash: string;
+  }>;
+
+export function loadPersistedPackageByReference(
+  runtimeDirectory: string,
+  ref: Readonly<{
+    relativePath: string;
+    byteLength: number;
+    packageHash: string;
+    schemaVersion: string;
+  }>,
+): LoadedPersistedPackage {
+  const runtime = realpathSync(resolve(runtimeDirectory));
+  assertNoSymlinkComponents(runtime);
+  const packagePath = resolve(runtime, ref.relativePath);
+  if (!isWithin(runtime, packagePath)) {
+    fail(
+      "WORK_PACKAGE_REPOSITORY_ESCAPE",
+      "Persisted package path escapes runtime directory",
+    );
+  }
+  assertNoSymlinkComponents(packagePath);
+
+  const fd = openSync(packagePath, "r");
+  let bytes: Buffer;
+  let loadedByteLength: number;
+  try {
+    const stat = fstatSync(fd);
+    if (!stat.isFile()) {
+      fail(
+        "WORK_PACKAGE_PATH_INVALID",
+        "Persisted package path is not a regular file",
+      );
+    }
+    loadedByteLength = stat.size;
+    bytes = readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+
+  if (loadedByteLength !== ref.byteLength || bytes.length !== ref.byteLength) {
+    fail(
+      "WORK_PACKAGE_AT_REST_MISMATCH",
+      "Persisted package byte length differs from reference",
+    );
+  }
+
+  const loadedHash = createHash("sha256").update(bytes).digest("hex");
+
+  const parsed = parseWorkPackage(
+    JSON.parse(bytes.toString("utf8")) as unknown,
+    true,
+  ) as WorkPackage & { readonly packageHash: string };
+  const computedHash = computePackageHash(parsed);
+  if (
+    computedHash !== ref.packageHash ||
+    parsed.packageHash !== ref.packageHash
+  ) {
+    fail(
+      "WORK_PACKAGE_AT_REST_MISMATCH",
+      "Recomputed package hash does not match reference",
+    );
+  }
+
+  if (parsed.schemaVersion !== ref.schemaVersion) {
+    fail(
+      "WORK_PACKAGE_AT_REST_MISMATCH",
+      "Package schema version does not match reference",
+    );
+  }
+
+  return Object.freeze({
+    ...parsed,
+    packageHash: computedHash,
+    loadedByteLength,
+    loadedHash,
+  });
 }

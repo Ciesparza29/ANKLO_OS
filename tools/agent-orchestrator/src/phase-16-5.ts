@@ -19,8 +19,10 @@ import {
   type VerificationRunner,
 } from "./verification-runner.ts";
 import {
+  loadPersistedPackageByReference,
   persistWorkPackage,
   validateWorkPackage,
+  type LoadedPersistedPackage,
   type RunSnapshotInput,
   type WorkPackage,
 } from "./work-package.ts";
@@ -36,6 +38,7 @@ export interface Phase165Dependencies {
   readonly verificationRunner: VerificationRunner;
   readonly githubAdapter: GitHubReadOnlyAdapter;
   readonly codexAdapter: CodexReadOnlyAdapter;
+  readonly runtimeDirectory: string;
 }
 
 function fail(code: string, message: string): never {
@@ -93,6 +96,74 @@ function requirePackageRunBinding(run: RunRecord, pkg: WorkPackage): void {
   }
 }
 
+function requirePackageReference(
+  run: RunRecord,
+): NonNullable<RunRecord["packageReference"]> {
+  if (!run.packageReference) {
+    fail(
+      "MISSING_PACKAGE_REFERENCE",
+      `Run ${run.runId} has no persisted package reference`,
+    );
+  }
+  return run.packageReference;
+}
+
+function loadAndRevalidatePackage(
+  run: RunRecord,
+  runtimeDirectory: string,
+  worktreeManager: WorktreeManager,
+): LoadedPersistedPackage {
+  const ref = requirePackageReference(run);
+  const pkg = loadPersistedPackageByReference(runtimeDirectory, ref);
+
+  requirePackageRunBinding(run, pkg);
+
+  if (
+    run.packageHash !== pkg.packageHash ||
+    run.worktreeId !== pkg.targetWorktreeId ||
+    run.targetHeadSha !== pkg.targetHeadSha ||
+    run.authorizedFilesHash !== pkg.authorizedFilesHash ||
+    run.targetBranch !== pkg.targetBranch
+  ) {
+    fail(
+      "WORK_PACKAGE_RUN_MISMATCH",
+      "Persisted package bindings do not match the StateStore run",
+    );
+  }
+
+  if (!run.planApprovalBinding) {
+    fail(
+      "WORK_PACKAGE_RUN_MISMATCH",
+      "Run record is missing planApprovalBinding required for effects",
+    );
+  }
+
+  const runBindingStr = JSON.stringify(run.planApprovalBinding);
+  const pkgBindingStr = JSON.stringify(pkg.planApprovalBinding);
+  if (runBindingStr !== pkgBindingStr) {
+    fail(
+      "WORK_PACKAGE_RUN_MISMATCH",
+      "Persisted package planApprovalBinding does not match the StateStore run",
+    );
+  }
+
+  const worktreeEvidence = worktreeManager.validateWorktreeAccess(
+    pkg.worktreePath,
+    pkg.targetHeadSha,
+  );
+  if (
+    worktreeEvidence.branch !== pkg.targetBranch ||
+    worktreeEvidence.repository !== pkg.repository
+  ) {
+    fail(
+      "WORK_PACKAGE_WORKTREE_MISMATCH",
+      "Worktree identity does not match persisted package",
+    );
+  }
+
+  return pkg;
+}
+
 function errorCode(error: unknown): string {
   return normalizeError(error).code;
 }
@@ -103,6 +174,7 @@ export class Phase165Service {
   readonly #verificationRunner: VerificationRunner;
   readonly #githubAdapter: GitHubReadOnlyAdapter;
   readonly #codexAdapter: CodexReadOnlyAdapter;
+  readonly #runtimeDirectory: string;
 
   constructor(dependencies: Phase165Dependencies) {
     this.#stateStore = dependencies.stateStore;
@@ -110,6 +182,7 @@ export class Phase165Service {
     this.#verificationRunner = dependencies.verificationRunner;
     this.#githubAdapter = dependencies.githubAdapter;
     this.#codexAdapter = dependencies.codexAdapter;
+    this.#runtimeDirectory = dependencies.runtimeDirectory;
   }
 
   createImplementationWorktree(
@@ -171,7 +244,13 @@ export class Phase165Service {
         "Work package target does not match the validated worktree",
       );
     }
-    const packagePath = persistWorkPackage({
+    const {
+      packagePath,
+      relativePath,
+      byteLength,
+      packageHash,
+      schemaVersion,
+    } = persistWorkPackage({
       workPackage: input.workPackage,
       runtimeDirectory: input.runtimeDirectory,
       repositoryRoot: input.workPackage.worktreePath,
@@ -186,6 +265,13 @@ export class Phase165Service {
       worktreeId: input.workPackage.targetWorktreeId,
       authorizedFilesHash: input.workPackage.authorizedFilesHash,
       packageHash: input.workPackage.packageHash,
+      planApprovalBinding: input.workPackage.planApprovalBinding,
+      packageReference: {
+        schemaVersion,
+        relativePath,
+        packageHash,
+        byteLength,
+      },
       correlationId: input.correlationId,
       now: input.now,
     });
@@ -208,45 +294,60 @@ export class Phase165Service {
   }
 
   async runVerification(input: {
-    workPackage: WorkPackage & { readonly packageHash: string };
+    runId: string;
     profile: VerificationProfileName;
     holderPid: number;
     correlationId: string;
     now: Date;
   }): Promise<ProfileExecutionResult> {
-    const run = requireRun(this.#stateStore, input.workPackage.runId, [
+    const run = requireRun(this.#stateStore, input.runId, [
       "RUNNING_IMPLEMENTATION",
     ]);
-    requirePackageRunBinding(run, input.workPackage);
+
     if (
-      run.packageHash !== input.workPackage.packageHash ||
-      run.worktreeId !== input.workPackage.targetWorktreeId ||
-      run.targetHeadSha !== input.workPackage.targetHeadSha ||
-      !input.workPackage.fixedProfiles.includes(input.profile)
+      !this.#stateStore.hasCurrentApproval(
+        input.runId,
+        "IMPLEMENT_APPROVED",
+        input.now,
+      )
     ) {
       fail(
-        "VERIFICATION_RUN_MISMATCH",
-        "Verification is not bound to the approved package and worktree",
+        "APPROVAL_REQUIRED",
+        "IMPLEMENT_APPROVED approval is required for verification",
       );
     }
+
+    const pkg = loadAndRevalidatePackage(
+      run,
+      this.#runtimeDirectory,
+      this.#worktreeManager,
+    );
+
+    if (!pkg.fixedProfiles.includes(input.profile)) {
+      fail(
+        "VERIFICATION_RUN_MISMATCH",
+        "Requested profile is not in the package fixedProfiles",
+      );
+    }
+
     this.#stateStore.assertActiveDispatchLeases({
       runId: run.runId,
       issueNumber: run.issueNumber,
-      worktreeId: input.workPackage.targetWorktreeId,
+      worktreeId: pkg.targetWorktreeId,
       holderPid: input.holderPid,
       now: input.now,
     });
     try {
       const result = await this.#verificationRunner.runProfile(
         input.profile,
-        input.workPackage.worktreePath,
-        input.workPackage.targetHeadSha,
+        pkg.worktreePath,
+        pkg.targetHeadSha,
       );
       this.#stateStore.recordPhase165Event({
         runId: run.runId,
         eventType: "VERIFICATION_COMPLETED",
         correlationId: input.correlationId,
-        evidenceRef: `sha256:${input.workPackage.packageHash}`,
+        evidenceRef: `sha256:${pkg.packageHash}`,
         result: result.success ? "OK" : "DENIED",
         payload: {
           profile: input.profile,
@@ -263,7 +364,7 @@ export class Phase165Service {
         runId: run.runId,
         eventType: "VERIFICATION_COMPLETED",
         correlationId: input.correlationId,
-        evidenceRef: `sha256:${input.workPackage.packageHash}`,
+        evidenceRef: `sha256:${pkg.packageHash}`,
         result: "ERROR",
         payload: { profile: input.profile, error_code: errorCode(error) },
         now: input.now,
@@ -308,29 +409,45 @@ export class Phase165Service {
   }
 
   async runCodexReview(input: {
-    workPackage: WorkPackage & { readonly packageHash: string };
+    runId: string;
     prompt: string;
+    holderPid: number;
     correlationId: string;
     now: Date;
   }): Promise<CodexReviewExecution> {
-    const run = requireRun(this.#stateStore, input.workPackage.runId, [
-      "RUNNING_REVIEW",
-    ]);
-    requirePackageRunBinding(run, input.workPackage);
+    const run = requireRun(this.#stateStore, input.runId, ["RUNNING_REVIEW"]);
+
     if (
-      run.packageHash !== input.workPackage.packageHash ||
-      run.worktreeId !== input.workPackage.targetWorktreeId ||
-      run.targetHeadSha !== input.workPackage.targetHeadSha
+      !this.#stateStore.hasCurrentApproval(
+        input.runId,
+        "IMPLEMENT_APPROVED",
+        input.now,
+      )
     ) {
       fail(
-        "CODEX_RUN_MISMATCH",
-        "Codex review is not bound to the approved package and worktree",
+        "APPROVAL_REQUIRED",
+        "IMPLEMENT_APPROVED approval is required for Codex review",
       );
     }
+
+    const pkg = loadAndRevalidatePackage(
+      run,
+      this.#runtimeDirectory,
+      this.#worktreeManager,
+    );
+
+    this.#stateStore.assertActiveDispatchLeases({
+      runId: run.runId,
+      issueNumber: run.issueNumber,
+      worktreeId: pkg.targetWorktreeId,
+      holderPid: input.holderPid,
+      now: input.now,
+    });
+
     try {
       const execution = await this.#codexAdapter.reviewWorktree(
-        input.workPackage.worktreePath,
-        input.workPackage.targetHeadSha,
+        pkg.worktreePath,
+        pkg.targetHeadSha,
         input.prompt,
       );
       const summaryHash = createHash("sha256")
@@ -340,13 +457,13 @@ export class Phase165Service {
         runId: run.runId,
         eventType: "CODEX_REVIEW_COMPLETED",
         correlationId: input.correlationId,
-        evidenceRef: `sha256:${input.workPackage.packageHash}`,
+        evidenceRef: `sha256:${pkg.packageHash}`,
         result: execution.result.decision === "APPROVE" ? "OK" : "DENIED",
         payload: {
           decision: execution.result.decision,
           summary_hash: summaryHash,
           findings_count: execution.result.findings.length,
-          reviewed_head_sha: input.workPackage.targetHeadSha,
+          reviewed_head_sha: pkg.targetHeadSha,
         },
         now: input.now,
       });
@@ -356,7 +473,7 @@ export class Phase165Service {
         runId: run.runId,
         eventType: "CODEX_REVIEW_COMPLETED",
         correlationId: input.correlationId,
-        evidenceRef: `sha256:${input.workPackage.packageHash}`,
+        evidenceRef: `sha256:${pkg.packageHash}`,
         result: "ERROR",
         payload: { error_code: errorCode(error) },
         now: input.now,

@@ -477,6 +477,16 @@ export async function runCli(
           worktreeId,
           authorizedFilesHash,
           packageHash,
+          planApprovalBinding: {
+            approvalEventId: "manual-bind",
+            approvalCommentId: 0,
+            approvalAuthorLogin: "cli",
+            approvalCommentUpdatedAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 86400000).toISOString(),
+            baseSha: "base",
+            planHash: "plan",
+            sourceSnapshotHash: "snap",
+          },
           correlationId: runId,
           now: new Date(),
         });

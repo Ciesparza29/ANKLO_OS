@@ -96,6 +96,18 @@ function bindTarget(store: SqliteStateStore, runId: string): void {
     worktreeId: "worktree-24",
     authorizedFilesHash: "3".repeat(64),
     packageHash: "4".repeat(64),
+    planApprovalBinding: {
+      approvalEventId: "evt_1",
+      approvalCommentId: 100,
+      approvalAuthorLogin: "testuser",
+      approvalCommentUpdatedAt: "2026-07-26T00:00:00.000Z",
+      expiresAt: "2026-08-01T00:00:00.000Z",
+      baseSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      planHash:
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      sourceSnapshotHash:
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    },
     correlationId: runId,
     now: new Date("2026-07-26T12:04:00Z"),
   });
@@ -112,7 +124,7 @@ describe("SQLite state store", () => {
   it("verifies schema version, WAL, foreign keys, timeout and integrity", () => {
     const { store } = createStore();
     expect(store.runtimeDiagnostics()).toEqual({
-      schemaVersion: 3,
+      schemaVersion: 5,
       journalMode: "wal",
       foreignKeys: true,
       busyTimeoutMs: 5000,
@@ -249,6 +261,43 @@ describe("SQLite state store", () => {
     store.close();
   });
 
+  it("persists planApprovalBinding structurally on bindImplementationTarget", () => {
+    const { store } = createStore();
+    createRun(store, "run-binding");
+    approvePlan(store, "run-binding");
+    const binding = {
+      approvalEventId: "evt_bind",
+      approvalCommentId: 100,
+      approvalAuthorLogin: "test",
+      approvalCommentUpdatedAt: "2026-07-26T00:00:00.000Z",
+      expiresAt: "2026-08-01T00:00:00.000Z",
+      baseSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      planHash:
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      sourceSnapshotHash:
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    };
+    store.bindImplementationTarget({
+      runId: "run-binding",
+      targetRepository: "Ciesparza29/ANKLO_OS",
+      targetRemote: "origin",
+      targetBranch: "feat/24-bind",
+      targetHeadSha: "7".repeat(40),
+      worktreeId: "worktree-bind",
+      authorizedFilesHash: "3".repeat(64),
+      packageHash: "4".repeat(64),
+      planApprovalBinding: binding,
+      correlationId: "run-binding",
+      now: new Date("2026-07-26T12:04:00Z"),
+    });
+
+    const run = store.getRun("run-binding");
+    expect(run?.planApprovalBinding).toBeDefined();
+    expect(run?.planApprovalBinding).toEqual(binding);
+
+    store.close();
+  });
+
   it("binds lease acquisition to run issue, worktree and state", () => {
     const { store } = createStore();
     createRun(store, "run-lease");
@@ -378,6 +427,18 @@ describe("SQLite state store", () => {
       worktreeId: "worktree-24",
       authorizedFilesHash: "3".repeat(64),
       packageHash: "4".repeat(64),
+      planApprovalBinding: {
+        approvalEventId: "evt_1",
+        approvalCommentId: 100,
+        approvalAuthorLogin: "testuser",
+        approvalCommentUpdatedAt: "2026-07-26T00:00:00.000Z",
+        expiresAt: "2026-08-01T00:00:00.000Z",
+        baseSha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        planHash:
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        sourceSnapshotHash:
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      },
       correlationId: "run-b",
       now: new Date("2026-07-26T12:04:00Z"),
     });

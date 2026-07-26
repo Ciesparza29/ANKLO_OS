@@ -9,10 +9,20 @@ import {
   isRunState,
   type RunState,
 } from "./state-machine.ts";
-import type { PlanApprovalBinding } from "./work-package.ts";
+import {
+  parsePlanApprovalBinding,
+  type PlanApprovalBinding,
+} from "./work-package.ts";
 
-const STATE_SCHEMA_VERSION = 3;
+const STATE_SCHEMA_VERSION = 5;
 const BUSY_TIMEOUT_MS = 5_000;
+
+export type PersistedWorkPackageReference = Readonly<{
+  schemaVersion: string;
+  relativePath: string;
+  packageHash: string;
+  byteLength: number;
+}>;
 
 export type RunRecord = Readonly<{
   runId: string;
@@ -30,6 +40,8 @@ export type RunRecord = Readonly<{
   worktreeId: string | null;
   authorizedFilesHash: string | null;
   packageHash: string | null;
+  packageReference: PersistedWorkPackageReference | null;
+  planApprovalBinding: PlanApprovalBinding | null;
   pullRequestNumber: number | null;
   pullRequestHeadSha: string | null;
   revalidationEpoch: number;
@@ -75,6 +87,7 @@ export type AuditEventRecord = Readonly<{
 
 export type Phase165EventType =
   | "WORK_PACKAGE_PERSISTED"
+  | "WORK_PACKAGE_VERIFIED"
   | "WORKTREE_CREATED"
   | "VERIFICATION_COMPLETED"
   | "GITHUB_READ_COMPLETED"
@@ -82,6 +95,7 @@ export type Phase165EventType =
 
 const PHASE_16_5_EVENT_TYPES = new Set<Phase165EventType>([
   "WORK_PACKAGE_PERSISTED",
+  "WORK_PACKAGE_VERIFIED",
   "WORKTREE_CREATED",
   "VERIFICATION_COMPLETED",
   "GITHUB_READ_COMPLETED",
@@ -176,6 +190,8 @@ export interface StateStore {
     worktreeId: string;
     authorizedFilesHash: string;
     packageHash: string;
+    packageReference?: PersistedWorkPackageReference | null;
+    planApprovalBinding: PlanApprovalBinding;
     correlationId: string;
     now: Date;
   }): RunRecord;
@@ -232,6 +248,7 @@ export interface StateStore {
     binding: PlanApprovalBinding;
     now: Date;
   }): void;
+  hasCurrentApproval(runId: string, effect: ApprovalKind, now: Date): boolean;
   recordApprovalEffect(input: {
     observedApproval: ObservedApproval;
     effect: ApprovalKind;
@@ -270,6 +287,10 @@ const SCHEMA_SPEC = {
       "worktree_id",
       "authorized_files_hash",
       "package_hash",
+      "package_relative_path",
+      "package_byte_length",
+      "package_schema_version",
+      "plan_approval_binding_json",
       "pull_request_number",
       "pull_request_head_sha",
       "created_at",
@@ -416,6 +437,24 @@ function toRun(row: DbRow): RunRecord {
         ? null
         : String(row.authorized_files_hash),
     packageHash: row.package_hash === null ? null : String(row.package_hash),
+    planApprovalBinding:
+      row.plan_approval_binding_json === null
+        ? null
+        : parsePlanApprovalBinding(
+            JSON.parse(String(row.plan_approval_binding_json)),
+          ),
+    packageReference:
+      row.package_hash === null ||
+      row.package_relative_path == null ||
+      row.package_byte_length == null ||
+      row.package_schema_version == null
+        ? null
+        : Object.freeze({
+            schemaVersion: String(row.package_schema_version),
+            relativePath: String(row.package_relative_path),
+            packageHash: String(row.package_hash),
+            byteLength: Number(row.package_byte_length),
+          }),
     pullRequestNumber:
       row.pull_request_number === null ? null : Number(row.pull_request_number),
     pullRequestHeadSha:
@@ -622,6 +661,13 @@ export class SqliteStateStore implements StateStore {
       this.#db.exec(`PRAGMA user_version = ${STATE_SCHEMA_VERSION};`);
     } else if (userVersion === 2) {
       this.#migrateV2toV3();
+      this.#migrateV3toV4();
+      this.#migrateV4toV5();
+    } else if (userVersion === 3) {
+      this.#migrateV3toV4();
+      this.#migrateV4toV5();
+    } else if (userVersion === 4) {
+      this.#migrateV4toV5();
     } else if (userVersion !== STATE_SCHEMA_VERSION) {
       throw new OrchestratorError(
         "STATE_STORE_SCHEMA_UNSUPPORTED",
@@ -663,6 +709,10 @@ export class SqliteStateStore implements StateStore {
         worktree_id TEXT,
         authorized_files_hash TEXT,
         package_hash TEXT,
+        package_relative_path TEXT,
+        package_byte_length INTEGER,
+        package_schema_version TEXT,
+        plan_approval_binding_json TEXT,
         pull_request_number INTEGER,
         pull_request_head_sha TEXT,
         created_at TEXT NOT NULL,
@@ -811,6 +861,64 @@ export class SqliteStateStore implements StateStore {
       );
 
       this.#db.exec(
+        "UPDATE schema_meta SET version = 3, applied_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE singleton_id = 1",
+      );
+
+      this.#db.exec("PRAGMA user_version = 3;");
+    });
+  }
+
+  #migrateV3toV4(): void {
+    const preCheck = scalarString(
+      this.#db.prepare("PRAGMA integrity_check").get(),
+    );
+    if (preCheck !== "ok") {
+      throw new OrchestratorError(
+        "STATE_STORE_INTEGRITY_FAILED",
+        "Pre-migration integrity check failed",
+        { details: { result: preCheck } },
+      );
+    }
+
+    if (this.#databasePath !== ":memory:") {
+      this.#backupDatabase(3);
+    }
+
+    this.#withImmediate(() => {
+      this.#db.exec("ALTER TABLE runs ADD COLUMN package_relative_path TEXT;");
+      this.#db.exec("ALTER TABLE runs ADD COLUMN package_byte_length INTEGER;");
+      this.#db.exec("ALTER TABLE runs ADD COLUMN package_schema_version TEXT;");
+
+      this.#db.exec(
+        `UPDATE schema_meta SET version = 4, applied_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE singleton_id = 1`,
+      );
+
+      this.#db.exec(`PRAGMA user_version = 4;`);
+    });
+  }
+
+  #migrateV4toV5(): void {
+    const preCheck = scalarString(
+      this.#db.prepare("PRAGMA integrity_check").get(),
+    );
+    if (preCheck !== "ok") {
+      throw new OrchestratorError(
+        "STATE_STORE_INTEGRITY_FAILED",
+        "Pre-migration integrity check failed",
+        { details: { result: preCheck } },
+      );
+    }
+
+    if (this.#databasePath !== ":memory:") {
+      this.#backupDatabase(4);
+    }
+
+    this.#withImmediate(() => {
+      this.#db.exec(
+        "ALTER TABLE runs ADD COLUMN plan_approval_binding_json TEXT;",
+      );
+
+      this.#db.exec(
         `UPDATE schema_meta SET version = ${STATE_SCHEMA_VERSION}, applied_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE singleton_id = 1`,
       );
 
@@ -818,9 +926,9 @@ export class SqliteStateStore implements StateStore {
     });
   }
 
-  #backupDatabase(): void {
+  #backupDatabase(expectedVersion = 2): void {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const backupPath = `${this.#databasePath}.backup-v2-${timestamp}`;
+    const backupPath = `${this.#databasePath}.backup-v${expectedVersion}-${timestamp}`;
     const escaped = backupPath.replace(/'/g, "''");
     this.#db.exec(`VACUUM INTO '${escaped}'`);
 
@@ -837,11 +945,13 @@ export class SqliteStateStore implements StateStore {
         );
       }
       const version = scalarNumber(backup.prepare("PRAGMA user_version").get());
-      if (version !== 2) {
+      if (version !== expectedVersion) {
         throw new OrchestratorError(
           "STATE_STORE_BACKUP_VERSION_MISMATCH",
           "Backup version does not match expected pre-migration version",
-          { details: { backupPath, expected: 2, actual: version } },
+          {
+            details: { backupPath, expected: expectedVersion, actual: version },
+          },
         );
       }
     } finally {
@@ -1332,10 +1442,11 @@ export class SqliteStateStore implements StateStore {
             base_sha, plan_hash, source_snapshot_hash,
             target_repository, target_remote, target_branch, target_head_sha,
             worktree_id, authorized_files_hash, package_hash,
+            package_relative_path, package_byte_length, package_schema_version,
             pull_request_number, pull_request_head_sha,
             revalidation_epoch, created_at, updated_at
           ) VALUES (?, ?, ?, 'DRAFT', ?, ?, ?, ?, NULL, NULL, NULL, NULL,
-                    NULL, NULL, NULL, NULL, NULL, 1, ?, ?)`,
+                    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1, ?, ?)`,
         )
         .run(
           input.runId,
@@ -1397,6 +1508,8 @@ export class SqliteStateStore implements StateStore {
     worktreeId: string;
     authorizedFilesHash: string;
     packageHash: string;
+    packageReference?: PersistedWorkPackageReference | null;
+    planApprovalBinding: PlanApprovalBinding;
     correlationId: string;
     now: Date;
   }): RunRecord {
@@ -1418,6 +1531,15 @@ export class SqliteStateStore implements StateStore {
           "Implementation target can only be bound after plan approval and before implementation",
         );
       }
+      if (
+        input.packageReference &&
+        input.packageReference.packageHash !== input.packageHash
+      ) {
+        throw new OrchestratorError(
+          "TARGET_BINDING_MISMATCH",
+          "Package reference hash does not match target package hash",
+        );
+      }
 
       const requested = [
         input.targetRepository,
@@ -1427,6 +1549,10 @@ export class SqliteStateStore implements StateStore {
         input.worktreeId,
         input.authorizedFilesHash,
         input.packageHash,
+        input.packageReference ? input.packageReference.relativePath : null,
+        input.packageReference ? input.packageReference.byteLength : null,
+        input.packageReference ? input.packageReference.schemaVersion : null,
+        JSON.stringify(input.planApprovalBinding),
       ];
       const existing = [
         run.targetRepository,
@@ -1436,8 +1562,14 @@ export class SqliteStateStore implements StateStore {
         run.worktreeId,
         run.authorizedFilesHash,
         run.packageHash,
+        run.packageReference ? run.packageReference.relativePath : null,
+        run.packageReference ? run.packageReference.byteLength : null,
+        run.packageReference ? run.packageReference.schemaVersion : null,
+        run.planApprovalBinding
+          ? JSON.stringify(run.planApprovalBinding)
+          : null,
       ];
-      const isUnbound = existing.every((value) => value === null);
+      const isUnbound = existing.slice(0, 7).every((value) => value === null);
       const isSame = existing.every(
         (value, index) => value === requested[index],
       );
@@ -1455,7 +1587,8 @@ export class SqliteStateStore implements StateStore {
           `UPDATE runs SET
              target_repository = ?, target_remote = ?, target_branch = ?,
              target_head_sha = ?, worktree_id = ?, authorized_files_hash = ?,
-             package_hash = ?, updated_at = ?
+             package_hash = ?, package_relative_path = ?, package_byte_length = ?,
+             package_schema_version = ?, plan_approval_binding_json = ?, updated_at = ?
            WHERE run_id = ?`,
         )
         .run(
@@ -1466,6 +1599,10 @@ export class SqliteStateStore implements StateStore {
           input.worktreeId,
           input.authorizedFilesHash,
           input.packageHash,
+          input.packageReference ? input.packageReference.relativePath : null,
+          input.packageReference ? input.packageReference.byteLength : null,
+          input.packageReference ? input.packageReference.schemaVersion : null,
+          JSON.stringify(input.planApprovalBinding),
           now,
           input.runId,
         );
@@ -1491,7 +1628,7 @@ export class SqliteStateStore implements StateStore {
     });
   }
 
-  #hasCurrentApproval(runId: string, effect: ApprovalKind, now: Date): boolean {
+  hasCurrentApproval(runId: string, effect: ApprovalKind, now: Date): boolean {
     const run = this.getRun(runId);
     if (!run) return false;
     const row = this.#db
@@ -1533,7 +1670,7 @@ export class SqliteStateStore implements StateStore {
       const requiredApproval = APPROVAL_GUARDS[input.to];
       if (
         requiredApproval &&
-        !this.#hasCurrentApproval(input.runId, requiredApproval, input.now)
+        !this.hasCurrentApproval(input.runId, requiredApproval, input.now)
       ) {
         throw new OrchestratorError(
           "APPROVAL_REQUIRED",
@@ -1560,7 +1697,8 @@ export class SqliteStateStore implements StateStore {
                target_repository = NULL, target_remote = NULL,
                target_branch = NULL, target_head_sha = NULL,
                worktree_id = NULL, authorized_files_hash = NULL,
-               package_hash = NULL
+               package_hash = NULL, package_relative_path = NULL,
+               package_byte_length = NULL, package_schema_version = NULL
              WHERE run_id = ?`,
           )
           .run(newEpoch, input.runId);

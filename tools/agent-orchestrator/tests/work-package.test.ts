@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import {
   chmodSync,
   mkdtempSync,
@@ -7,10 +8,47 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
+  existsSync,
+  readdirSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    existsSync: (path: import("node:fs").PathLike) => {
+      if (
+        (globalThis as any).__mockExistsFalse &&
+        String(path).endsWith("work-package.json")
+      ) {
+        return false;
+      }
+      return actual.existsSync(path);
+    },
+    linkSync: (
+      src: import("node:fs").PathLike,
+      dest: import("node:fs").PathLike,
+    ) => {
+      if ((globalThis as any).__mockLinkError) {
+        throw new Error("Simulated link failure");
+      }
+      return actual.linkSync(src, dest);
+    },
+    writeFileSync: (
+      fd: import("node:fs").PathOrFileDescriptor,
+      data: string | NodeJS.ArrayBufferView,
+      options: import("node:fs").WriteFileOptions,
+    ) => {
+      if ((globalThis as any).__mockWriteError) {
+        throw new Error("Simulated write failure");
+      }
+      return actual.writeFileSync(fd, data, options);
+    },
+  };
+});
 import {
   canonicalizeValue,
   canonicalizeWorkPackage,
@@ -21,6 +59,8 @@ import {
   normalizePackagePath,
   persistWorkPackage,
   validatePackagePathsAgainstRepository,
+  validateRunId,
+  assertPlainDataStructure,
   validateWorkPackage,
   type RunSnapshotInput,
   type WorkPackage,
@@ -230,7 +270,7 @@ describe("immutable work packages", () => {
     mkdirSync(join(repository, "prisma"), { recursive: true });
     mkdirSync(worktree);
     const pkg = createWorkPackage({ ...sampleInput, worktreePath: worktree });
-    const packagePath = persistWorkPackage({
+    const { packagePath } = persistWorkPackage({
       workPackage: pkg,
       runtimeDirectory: runtime,
       repositoryRoot: repository,
@@ -260,5 +300,344 @@ describe("immutable work packages", () => {
     expect(() =>
       loadAndValidatePersistedWorkPackage(packagePath, snapshot(pkg)),
     ).toThrow();
+  });
+
+  it("validates runId according to Requisito C", () => {
+    expect(validateRunId("run-123")).toBe("run-123");
+    expect(validateRunId("valid.run_ID-1")).toBe("valid.run_ID-1");
+    expect(validateRunId("a")).toBe("a");
+
+    expect(() => validateRunId("")).toThrow(/length/u);
+    expect(() => validateRunId("a".repeat(129))).toThrow(/length/u);
+    expect(() => validateRunId(".")).toThrow(/forbidden/u);
+    expect(() => validateRunId("..")).toThrow(/forbidden/u);
+    expect(() => validateRunId("run/123")).toThrow(/forbidden/u);
+    expect(() => validateRunId("run\\123")).toThrow(/forbidden/u);
+    expect(() => validateRunId("run 123")).toThrow(/forbidden/u);
+    expect(() => validateRunId("run\0id")).toThrow(/forbidden/u);
+    expect(() => validateRunId(".run")).toThrow(/pattern/u);
+    expect(() => validateRunId("-run")).toThrow(/pattern/u);
+    expect(() => validateRunId("_run")).toThrow(/pattern/u);
+    expect(() => validateRunId("e\u0301")).toThrow(/canonical/u);
+  });
+
+  it("asserts plain data structure according to Requisito E", () => {
+    expect(() =>
+      assertPlainDataStructure({ a: [1, "test", true, null] }),
+    ).not.toThrow();
+
+    expect(() => assertPlainDataStructure(Symbol("s"))).toThrow(/forbidden/u);
+    expect(() => assertPlainDataStructure(1n)).toThrow(/forbidden/u);
+    expect(() => assertPlainDataStructure(undefined)).toThrow(/forbidden/u);
+    expect(() => assertPlainDataStructure(() => {})).toThrow(/forbidden/u);
+    expect(() => assertPlainDataStructure({ [Symbol("k")]: 1 })).toThrow(
+      /Symbol/u,
+    );
+
+    const sparse = [1, 2];
+    delete sparse[0];
+    expect(() => assertPlainDataStructure(sparse)).toThrow(/sparse/u);
+
+    const extra = [1, 2];
+    Object.assign(extra, { foo: "bar" });
+    expect(() => assertPlainDataStructure(extra)).toThrow(/extra/u);
+
+    const objGet = {};
+    Object.defineProperty(objGet, "prop", {
+      get() {
+        return 1;
+      },
+      enumerable: true,
+    });
+    expect(() => assertPlainDataStructure(objGet)).toThrow(/getter/u);
+
+    const objNonEnum = {};
+    Object.defineProperty(objNonEnum, "prop", {
+      value: 1,
+      enumerable: false,
+    });
+    expect(() => assertPlainDataStructure(objNonEnum)).toThrow(/enumerable/u);
+
+    const objProto = {};
+    Object.defineProperty(objProto, "__proto__", {
+      value: {},
+      enumerable: true,
+    });
+    expect(() => assertPlainDataStructure(objProto)).toThrow(/forbidden/u);
+  });
+
+  describe("atomic publication constraints", () => {
+    beforeEach(() => {
+      (globalThis as any).__mockExistsFalse = false;
+      (globalThis as any).__mockLinkError = false;
+      (globalThis as any).__mockWriteError = false;
+    });
+
+    it("destino preexistente sin overwrite", () => {
+      const root = temporaryDirectory();
+      const repository = join(root, "repository");
+      const worktree = join(root, "worktree");
+      const runtime = join(root, "runtime");
+      mkdirSync(join(repository, "tools/agent-orchestrator/src"), {
+        recursive: true,
+      });
+      mkdirSync(join(repository, "apps/web"), { recursive: true });
+      mkdirSync(join(repository, "prisma"), { recursive: true });
+      mkdirSync(worktree);
+      const pkg = createWorkPackage({ ...sampleInput, worktreePath: worktree });
+
+      const { packagePath } = persistWorkPackage({
+        workPackage: pkg,
+        runtimeDirectory: runtime,
+        repositoryRoot: repository,
+        worktreePath: worktree,
+      });
+
+      // Alter the file physically
+      chmodSync(packagePath, 0o600);
+      writeFileSync(packagePath, "pre-existing-content", "utf8");
+
+      expect(() =>
+        persistWorkPackage({
+          workPackage: pkg,
+          runtimeDirectory: runtime,
+          repositoryRoot: repository,
+          worktreePath: worktree,
+        }),
+      ).toThrow(/already exists/u);
+
+      expect(readFileSync(packagePath, "utf8")).toBe("pre-existing-content");
+    });
+
+    it("publicación concurrente con exactamente un ganador", () => {
+      const root = temporaryDirectory();
+      const repository = join(root, "repository");
+      const worktree = join(root, "worktree");
+      const runtime = join(root, "runtime");
+      mkdirSync(join(repository, "tools/agent-orchestrator/src"), {
+        recursive: true,
+      });
+      mkdirSync(join(repository, "apps/web"), { recursive: true });
+      mkdirSync(join(repository, "prisma"), { recursive: true });
+      mkdirSync(worktree);
+      mkdirSync(runtime);
+      const pkg = createWorkPackage({ ...sampleInput, worktreePath: worktree });
+
+      const expectedPackageDirectory = join(
+        realpathSync(runtime),
+        "tasks",
+        String(pkg.issueNumber),
+        pkg.runId,
+      );
+      mkdirSync(expectedPackageDirectory, { recursive: true, mode: 0o700 });
+      const expectedPackagePath = join(
+        expectedPackageDirectory,
+        "work-package.json",
+      );
+      writeFileSync(expectedPackagePath, "winner-content", "utf8");
+
+      (globalThis as any).__mockExistsFalse = true;
+
+      expect(() =>
+        persistWorkPackage({
+          workPackage: pkg,
+          runtimeDirectory: runtime,
+          repositoryRoot: repository,
+          worktreePath: worktree,
+        }),
+      ).toThrow(/already exists or could not be published atomically/u);
+
+      (globalThis as any).__mockExistsFalse = false;
+
+      // Ensure the destination was not overwritten.
+      expect(readFileSync(expectedPackagePath, "utf8")).toBe("winner-content");
+
+      // Ensure the temp file of the loser was cleaned up
+      const files = readdirSync(expectedPackageDirectory);
+      expect(files.filter((f) => f.endsWith(".tmp")).length).toBe(0);
+    });
+
+    it("fallo después de crear o escribir el temporal y antes de publicar", () => {
+      const root = temporaryDirectory();
+      const repository = join(root, "repository");
+      const worktree = join(root, "worktree");
+      const runtime = join(root, "runtime");
+      mkdirSync(join(repository, "tools/agent-orchestrator/src"), {
+        recursive: true,
+      });
+      mkdirSync(join(repository, "apps/web"), { recursive: true });
+      mkdirSync(join(repository, "prisma"), { recursive: true });
+      mkdirSync(worktree);
+      mkdirSync(runtime);
+
+      const pkg = createWorkPackage({ ...sampleInput, worktreePath: worktree });
+
+      (globalThis as any).__mockWriteError = true;
+      expect(() =>
+        persistWorkPackage({
+          workPackage: pkg,
+          runtimeDirectory: runtime,
+          repositoryRoot: repository,
+          worktreePath: worktree,
+        }),
+      ).toThrow(
+        /Could not create temporary work package.*Simulated write failure/u,
+      );
+      (globalThis as any).__mockWriteError = false;
+
+      const expectedPackageDirectory = join(
+        realpathSync(runtime),
+        "tasks",
+        String(pkg.issueNumber),
+        pkg.runId,
+      );
+      const files = existsSync(expectedPackageDirectory)
+        ? readdirSync(expectedPackageDirectory)
+        : [];
+      expect(files).not.toContain("work-package.json"); // no incomplete final file
+      expect(files.filter((f) => f.endsWith(".tmp")).length).toBe(0); // temp file cleaned up
+    });
+
+    it("fallo del link no-clobber", () => {
+      const root = temporaryDirectory();
+      const repository = join(root, "repository");
+      const worktree = join(root, "worktree");
+      const runtime = join(root, "runtime");
+      mkdirSync(join(repository, "tools/agent-orchestrator/src"), {
+        recursive: true,
+      });
+      mkdirSync(join(repository, "apps/web"), { recursive: true });
+      mkdirSync(join(repository, "prisma"), { recursive: true });
+      mkdirSync(worktree);
+      mkdirSync(runtime);
+      const pkg = createWorkPackage({ ...sampleInput, worktreePath: worktree });
+
+      (globalThis as any).__mockLinkError = true;
+      expect(() =>
+        persistWorkPackage({
+          workPackage: pkg,
+          runtimeDirectory: runtime,
+          repositoryRoot: repository,
+          worktreePath: worktree,
+        }),
+      ).toThrow(
+        /already exists or could not be published atomically.*Simulated link failure/u,
+      );
+      (globalThis as any).__mockLinkError = false;
+
+      const expectedPackageDirectory = join(
+        realpathSync(runtime),
+        "tasks",
+        String(pkg.issueNumber),
+        pkg.runId,
+      );
+      const files = readdirSync(expectedPackageDirectory);
+      expect(files).not.toContain("work-package.json"); // no incomplete final file
+      expect(files.filter((f) => f.endsWith(".tmp")).length).toBe(0); // temp file cleaned up
+    });
+
+    it("limpieza exclusiva del temporal propio", () => {
+      const root = temporaryDirectory();
+      const repository = join(root, "repository");
+      const worktree = join(root, "worktree");
+      const runtime = join(root, "runtime");
+      mkdirSync(join(repository, "tools/agent-orchestrator/src"), {
+        recursive: true,
+      });
+      mkdirSync(join(repository, "apps/web"), { recursive: true });
+      mkdirSync(join(repository, "prisma"), { recursive: true });
+      mkdirSync(worktree);
+      mkdirSync(runtime);
+      const pkg = createWorkPackage({ ...sampleInput, worktreePath: worktree });
+
+      const expectedPackageDirectory = join(
+        realpathSync(runtime),
+        "tasks",
+        String(pkg.issueNumber),
+        pkg.runId,
+      );
+      mkdirSync(expectedPackageDirectory, { recursive: true, mode: 0o700 });
+      const alienTmpPath = join(expectedPackageDirectory, ".wp-alien.tmp");
+      writeFileSync(alienTmpPath, "alien-content", "utf8");
+
+      (globalThis as any).__mockLinkError = true;
+      expect(() =>
+        persistWorkPackage({
+          workPackage: pkg,
+          runtimeDirectory: runtime,
+          repositoryRoot: repository,
+          worktreePath: worktree,
+        }),
+      ).toThrow();
+      (globalThis as any).__mockLinkError = false;
+
+      // Alien tmp file MUST NOT be deleted
+      expect(existsSync(alienTmpPath)).toBe(true);
+      expect(readFileSync(alienTmpPath, "utf8")).toBe("alien-content");
+
+      const files = readdirSync(expectedPackageDirectory);
+      expect(files.filter((f) => f.endsWith(".tmp")).length).toBe(1); // Only the alien tmp file remains
+    });
+
+    it("alteración detectada durante la verificación posterior", () => {
+      const root = temporaryDirectory();
+      const repository = join(root, "repository");
+      const worktree = join(root, "worktree");
+      const runtime = join(root, "runtime");
+      mkdirSync(join(repository, "tools/agent-orchestrator/src"), {
+        recursive: true,
+      });
+      mkdirSync(join(repository, "apps/web"), { recursive: true });
+      mkdirSync(join(repository, "prisma"), { recursive: true });
+      mkdirSync(worktree);
+      mkdirSync(runtime);
+      const pkg = createWorkPackage({ ...sampleInput, worktreePath: worktree });
+
+      const { packagePath } = persistWorkPackage({
+        workPackage: pkg,
+        runtimeDirectory: runtime,
+        repositoryRoot: repository,
+        worktreePath: worktree,
+      });
+
+      chmodSync(packagePath, 0o600);
+      const persisted = JSON.parse(readFileSync(packagePath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      persisted.targetBranch = "hacked-branch";
+      writeFileSync(packagePath, JSON.stringify(persisted), "utf8");
+
+      expect(() =>
+        loadAndValidatePersistedWorkPackage(packagePath, snapshot(pkg)),
+      ).toThrow(/packageHash does not reproduce the canonical package/u);
+    });
+
+    it("rechazo de symlinks en la ruta real de publicación", () => {
+      const root = temporaryDirectory();
+      const repository = join(root, "repository");
+      const worktree = join(root, "worktree");
+      const runtime = join(root, "runtime");
+      const outside = join(root, "outside");
+      mkdirSync(join(repository, "tools/agent-orchestrator/src"), {
+        recursive: true,
+      });
+      mkdirSync(join(repository, "apps/web"), { recursive: true });
+      mkdirSync(join(repository, "prisma"), { recursive: true });
+      mkdirSync(worktree);
+      mkdirSync(outside);
+      symlinkSync(outside, runtime);
+
+      const pkg = createWorkPackage({ ...sampleInput, worktreePath: worktree });
+
+      expect(() =>
+        persistWorkPackage({
+          workPackage: pkg,
+          runtimeDirectory: runtime, // runtime is a symlink
+          repositoryRoot: repository,
+          worktreePath: worktree,
+        }),
+      ).toThrow(/traverses a symbolic link/u);
+    });
   });
 });
