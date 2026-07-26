@@ -1,7 +1,13 @@
-import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { isAbsolute, relative, sep } from "node:path";
+import { isRecord } from "./contracts.ts";
 import { OrchestratorError } from "./errors.ts";
 import { type GitEvidence, type WorktreeManager } from "./worktree.ts";
+
+const CODEX_EXECUTABLE = "codex";
+const DEFAULT_TIMEOUT_MS = 300_000;
+const DEFAULT_MAX_OUTPUT_BYTES = 5 * 1024 * 1024;
 
 export type CodexReviewDecision =
   "APPROVE" | "REQUEST_CHANGES" | "BLOCKED" | "NOT_VERIFIABLE";
@@ -13,157 +19,329 @@ export interface CodexReviewResult {
   readonly timestamp: string;
 }
 
-export interface CodexExecConfig {
-  readonly codexBinary: string;
-  readonly timeoutMs: number;
-  readonly maxOutputBytes: number;
+export interface CodexReadOnlyConfig {
+  readonly runtimeDirectory: string;
+  readonly outputSchemaPath: string;
+  readonly timeoutMs?: number;
+  readonly maxOutputBytes?: number;
+}
+
+export interface CodexReviewExecution {
+  readonly result: CodexReviewResult;
+  readonly beforeEvidence: GitEvidence;
+  readonly afterEvidence: GitEvidence;
+  readonly stderr: string;
+}
+
+function fail(code: string, message: string): never {
+  throw new OrchestratorError(code, message);
+}
+
+function isWithin(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return (
+    rel === "" ||
+    (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel))
+  );
+}
+
+function sanitizeDiagnostic(value: string): string {
+  let sanitized = value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer [REDACTED]")
+    .replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b/gu, "[REDACTED]")
+    .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/gu, "[REDACTED]")
+    .replace(/\bsk-[A-Za-z0-9_-]{20,}\b/gu, "[REDACTED]");
+  for (const [name, secret] of Object.entries(process.env)) {
+    if (
+      secret &&
+      secret.length >= 8 &&
+      /(token|secret|password|api[_-]?key|credential)/iu.test(name)
+    ) {
+      sanitized = sanitized.split(secret).join("[REDACTED]");
+    }
+  }
+  return sanitized;
+}
+
+function terminateProcessTree(pid: number | undefined): void {
+  if (!pid) return;
+  try {
+    if (process.platform === "win32") process.kill(pid, "SIGKILL");
+    else process.kill(-pid, "SIGKILL");
+  } catch {
+    // The process may already have exited.
+  }
+}
+
+function exactKeys(
+  object: Record<string, unknown>,
+  expected: readonly string[],
+): void {
+  const actual = Object.keys(object).sort();
+  const wanted = [...expected].sort();
+  if (
+    actual.length !== wanted.length ||
+    actual.some((key, index) => key !== wanted[index])
+  ) {
+    fail(
+      "MALFORMED_CODEX_OUTPUT",
+      "Codex result contains missing or unknown fields",
+    );
+  }
+}
+
+export function parseCodexJsonLines(output: string): CodexReviewResult {
+  const messages: string[] = [];
+  const lines = output.split("\n").filter((line) => line.length > 0);
+  if (lines.length === 0) {
+    fail("MALFORMED_CODEX_OUTPUT", "Codex returned no JSONL events");
+  }
+  for (const line of lines) {
+    let event: unknown;
+    try {
+      event = JSON.parse(line) as unknown;
+    } catch {
+      fail("MALFORMED_CODEX_OUTPUT", "Codex emitted non-JSON trailing text");
+    }
+    if (!isRecord(event)) {
+      fail("MALFORMED_CODEX_OUTPUT", "Codex JSONL event must be an object");
+    }
+    if (event.type !== "item.completed") continue;
+    if (!isRecord(event.item) || event.item.type !== "agent_message") continue;
+    if (typeof event.item.text !== "string") {
+      fail("MALFORMED_CODEX_OUTPUT", "Codex agent message text is invalid");
+    }
+    messages.push(event.item.text);
+  }
+  if (messages.length !== 1) {
+    fail(
+      "MALFORMED_CODEX_OUTPUT",
+      "Codex must emit exactly one final agent_message result",
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(messages[0] ?? "") as unknown;
+  } catch {
+    fail(
+      "MALFORMED_CODEX_OUTPUT",
+      "Codex final agent_message is not the required JSON result",
+    );
+  }
+  if (!isRecord(parsed)) {
+    fail("MALFORMED_CODEX_OUTPUT", "Codex result must be an object");
+  }
+  exactKeys(parsed, ["decision", "summary", "findings"]);
+  const decisions: readonly CodexReviewDecision[] = [
+    "APPROVE",
+    "REQUEST_CHANGES",
+    "BLOCKED",
+    "NOT_VERIFIABLE",
+  ];
+  if (
+    typeof parsed.decision !== "string" ||
+    !decisions.includes(parsed.decision as CodexReviewDecision)
+  ) {
+    fail("MALFORMED_CODEX_OUTPUT", "Codex decision is invalid");
+  }
+  if (typeof parsed.summary !== "string" || parsed.summary.length === 0) {
+    fail("MALFORMED_CODEX_OUTPUT", "Codex summary is invalid");
+  }
+  if (
+    !Array.isArray(parsed.findings) ||
+    parsed.findings.some((finding) => typeof finding !== "string")
+  ) {
+    fail("MALFORMED_CODEX_OUTPUT", "Codex findings are invalid");
+  }
+  return Object.freeze({
+    decision: parsed.decision as CodexReviewDecision,
+    summary: parsed.summary,
+    findings: Object.freeze([...parsed.findings] as string[]),
+    timestamp: new Date().toISOString(),
+  });
 }
 
 export class CodexReadOnlyAdapter {
-  readonly #config: CodexExecConfig;
   readonly #worktreeManager: WorktreeManager;
+  readonly #codexHome: string;
+  readonly #outputSchemaPath: string;
+  readonly #timeoutMs: number;
+  readonly #maxOutputBytes: number;
 
-  constructor(
-    worktreeManager: WorktreeManager,
-    config?: Partial<CodexExecConfig>,
-  ) {
+  constructor(worktreeManager: WorktreeManager, config: CodexReadOnlyConfig) {
+    if (!isAbsolute(config.runtimeDirectory)) {
+      fail("INVALID_CODEX_CONFIG", "Runtime directory must be absolute");
+    }
+    mkdirSync(config.runtimeDirectory, { recursive: true, mode: 0o700 });
+    this.#codexHome = realpathSync(config.runtimeDirectory);
+    if (
+      !isAbsolute(config.outputSchemaPath) ||
+      !existsSync(config.outputSchemaPath)
+    ) {
+      fail(
+        "INVALID_CODEX_CONFIG",
+        "Output schema must be an existing absolute path",
+      );
+    }
+    this.#outputSchemaPath = realpathSync(config.outputSchemaPath);
+    if (!lstatSync(this.#outputSchemaPath).isFile()) {
+      fail("INVALID_CODEX_CONFIG", "Output schema must be a regular file");
+    }
+    this.#timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.#maxOutputBytes = config.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
+    if (
+      !Number.isSafeInteger(this.#timeoutMs) ||
+      this.#timeoutMs <= 0 ||
+      this.#timeoutMs > 900_000 ||
+      !Number.isSafeInteger(this.#maxOutputBytes) ||
+      this.#maxOutputBytes <= 0 ||
+      this.#maxOutputBytes > 20 * 1024 * 1024
+    ) {
+      fail("INVALID_CODEX_CONFIG", "Codex resource limits are invalid");
+    }
     this.#worktreeManager = worktreeManager;
-    this.#config = {
-      codexBinary: config?.codexBinary || "codex",
-      timeoutMs: config?.timeoutMs || 300000,
-      maxOutputBytes: config?.maxOutputBytes || 5 * 1024 * 1024,
+  }
+
+  #environment(): NodeJS.ProcessEnv {
+    return {
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      HOME: "/nonexistent",
+      XDG_CONFIG_HOME: "/nonexistent",
+      CODEX_HOME: this.#codexHome,
+      TMPDIR: "/tmp",
+      LANG: "C",
+      LC_ALL: "C",
+      NO_COLOR: "1",
+      RUST_BACKTRACE: "0",
     };
   }
 
-  /**
-   * Invokes Codex in read-only non-interactive exec mode.
-   * Enforces ephemeral session, disabled MCP, explicit directory, and JSON output schema.
-   * Verifies git evidence before and after to ensure zero mutation occurred.
-   */
-  reviewWorktree(
+  async reviewWorktree(
     worktreePath: string,
-    expectedBaseSha: string,
+    expectedHeadSha: string,
     prompt: string,
-  ): {
-    readonly result: CodexReviewResult;
-    readonly beforeEvidence: GitEvidence;
-    readonly afterEvidence: GitEvidence;
-  } {
-    if (!existsSync(worktreePath)) {
-      throw new OrchestratorError(
-        "UNAUTHORIZED_WORKTREE",
-        `Worktree directory does not exist: ${worktreePath}`,
-      );
+  ): Promise<CodexReviewExecution> {
+    if (
+      typeof prompt !== "string" ||
+      prompt.length === 0 ||
+      prompt.length > 200_000 ||
+      prompt.includes("\0")
+    ) {
+      fail("INVALID_CODEX_PROMPT", "Codex prompt is invalid");
     }
-
     const beforeEvidence = this.#worktreeManager.validateWorktreeAccess(
       worktreePath,
-      expectedBaseSha,
+      expectedHeadSha,
     );
-
-    const args = [
+    if (
+      isWithin(beforeEvidence.worktreePath, this.#codexHome) ||
+      isWithin(this.#codexHome, beforeEvidence.worktreePath)
+    ) {
+      fail(
+        "INVALID_CODEX_CONFIG",
+        "Codex runtime and worktree must be disjoint",
+      );
+    }
+    const args = Object.freeze([
       "exec",
+      "--ignore-user-config",
+      "--strict-config",
+      "-c",
+      "mcp_servers={}",
       "--sandbox",
       "read-only",
-      "--no-mcp",
       "--ephemeral",
       "--json",
+      "--output-schema",
+      this.#outputSchemaPath,
+      "--cd",
+      beforeEvidence.worktreePath,
       prompt,
-    ];
+    ]);
 
-    const res = spawnSync(this.#config.codexBinary, args, {
-      cwd: worktreePath,
-      timeout: this.#config.timeoutMs,
-      maxBuffer: this.#config.maxOutputBytes,
-      encoding: "utf8",
-      shell: false,
+    const execution = await new Promise<{
+      exitCode: number | null;
+      stdout: string;
+      stderr: string;
+      timedOut: boolean;
+      outputLimitExceeded: boolean;
+      spawnError?: Error;
+    }>((resolveExecution) => {
+      const child = spawn(CODEX_EXECUTABLE, args, {
+        cwd: beforeEvidence.worktreePath,
+        env: this.#environment(),
+        shell: false,
+        detached: process.platform !== "win32",
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      let stdout = "";
+      let stderr = "";
+      let bytes = 0;
+      let timedOut = false;
+      let outputLimitExceeded = false;
+      let spawnError: Error | undefined;
+      const append = (channel: "stdout" | "stderr", chunk: Buffer): void => {
+        bytes += chunk.byteLength;
+        if (bytes > this.#maxOutputBytes) {
+          outputLimitExceeded = true;
+          terminateProcessTree(child.pid);
+          return;
+        }
+        if (channel === "stdout") stdout += chunk.toString("utf8");
+        else stderr += chunk.toString("utf8");
+      };
+      child.stdout.on("data", (chunk: Buffer) => append("stdout", chunk));
+      child.stderr.on("data", (chunk: Buffer) => append("stderr", chunk));
+      child.once("error", (error) => {
+        spawnError = error;
+      });
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        terminateProcessTree(child.pid);
+      }, this.#timeoutMs);
+      child.once("close", (exitCode) => {
+        clearTimeout(timeout);
+        resolveExecution({
+          exitCode,
+          stdout,
+          stderr: sanitizeDiagnostic(
+            spawnError ? `${stderr}\n${spawnError.message}` : stderr,
+          ),
+          timedOut,
+          outputLimitExceeded,
+          ...(spawnError ? { spawnError } : {}),
+        });
+      });
     });
 
     const afterEvidence = this.#worktreeManager.validateWorktreeAccess(
       worktreePath,
-      expectedBaseSha,
+      expectedHeadSha,
     );
-
+    this.#worktreeManager.assertEvidenceUnchanged(
+      beforeEvidence,
+      afterEvidence,
+    );
     if (
-      afterEvidence.headSha !== beforeEvidence.headSha ||
-      !afterEvidence.isClean
+      execution.spawnError ||
+      execution.exitCode !== 0 ||
+      execution.timedOut ||
+      execution.outputLimitExceeded
     ) {
-      throw new OrchestratorError(
-        "CODEX_MUTATION_DETECTED",
-        "Codex read-only sandbox violation: worktree git state or clean status was altered during review",
+      fail(
+        "CODEX_EXECUTION_FAILED",
+        `Codex read-only execution failed with exit code ${String(
+          execution.exitCode,
+        )}`,
       );
     }
-
-    let result: CodexReviewResult;
-    try {
-      if (res.status !== 0 && !res.stdout.trim()) {
-        throw new Error(res.stderr || `Codex exited with status ${res.status}`);
-      }
-      const parsed = JSON.parse(res.stdout.trim()) as Record<string, unknown>;
-      const validDecisions: CodexReviewDecision[] = [
-        "APPROVE",
-        "REQUEST_CHANGES",
-        "BLOCKED",
-        "NOT_VERIFIABLE",
-      ];
-      const dec =
-        typeof parsed.decision === "string"
-          ? (parsed.decision as CodexReviewDecision)
-          : "NOT_VERIFIABLE";
-      const decision: CodexReviewDecision = validDecisions.includes(dec)
-        ? dec
-        : "NOT_VERIFIABLE";
-
-      result = {
-        decision,
-        summary:
-          typeof parsed.summary === "string"
-            ? parsed.summary
-            : "No summary provided by Codex",
-        findings: Array.isArray(parsed.findings)
-          ? parsed.findings.map((f) => String(f))
-          : [],
-        timestamp: new Date().toISOString(),
-      };
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      result = {
-        decision: "NOT_VERIFIABLE",
-        summary: "Failed to parse structured JSON output from Codex",
-        findings: [msg, res.stderr || ""].filter(Boolean),
-        timestamp: new Date().toISOString(),
-      };
-    }
-
-    return { result, beforeEvidence, afterEvidence };
-  }
-
-  // Strictly prohibited mutating or authoritative methods per ADR-0010 Section 11
-  approvePlan(): never {
-    throw new OrchestratorError(
-      "READ_ONLY_ADAPTER_VIOLATION",
-      "Codex has no authority to approve requirements or implementation plans",
-    );
-  }
-
-  commit(): never {
-    throw new OrchestratorError(
-      "READ_ONLY_ADAPTER_VIOLATION",
-      "Codex read-only adapter forbids git commit",
-    );
-  }
-
-  push(): never {
-    throw new OrchestratorError(
-      "READ_ONLY_ADAPTER_VIOLATION",
-      "Codex read-only adapter forbids git push",
-    );
-  }
-
-  merge(): never {
-    throw new OrchestratorError(
-      "READ_ONLY_ADAPTER_VIOLATION",
-      "Codex read-only adapter forbids git merge",
-    );
+    return Object.freeze({
+      result: parseCodexJsonLines(execution.stdout),
+      beforeEvidence,
+      afterEvidence,
+      stderr: execution.stderr,
+    });
   }
 }

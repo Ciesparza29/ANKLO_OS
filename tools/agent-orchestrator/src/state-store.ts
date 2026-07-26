@@ -9,6 +9,7 @@ import {
   isRunState,
   type RunState,
 } from "./state-machine.ts";
+import type { PlanApprovalBinding } from "./work-package.ts";
 
 const STATE_SCHEMA_VERSION = 3;
 const BUSY_TIMEOUT_MS = 5_000;
@@ -71,6 +72,70 @@ export type AuditEventRecord = Readonly<{
   payload: unknown;
   createdAt: string;
 }>;
+
+export type Phase165EventType =
+  | "WORK_PACKAGE_PERSISTED"
+  | "WORKTREE_CREATED"
+  | "VERIFICATION_COMPLETED"
+  | "GITHUB_READ_COMPLETED"
+  | "CODEX_REVIEW_COMPLETED";
+
+const PHASE_16_5_EVENT_TYPES = new Set<Phase165EventType>([
+  "WORK_PACKAGE_PERSISTED",
+  "WORKTREE_CREATED",
+  "VERIFICATION_COMPLETED",
+  "GITHUB_READ_COMPLETED",
+  "CODEX_REVIEW_COMPLETED",
+]);
+
+function assertSafePhase165Payload(value: unknown, path = "payload"): void {
+  if (value === null || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new OrchestratorError(
+        "INVALID_PHASE_16_5_EVIDENCE",
+        `${path} contains a non-finite number`,
+      );
+    }
+    return;
+  }
+  if (typeof value === "string") {
+    if (
+      /\bBearer\s+[A-Za-z0-9._~+/=-]+/iu.test(value) ||
+      /\b(?:ghp|gho|ghu|ghs|ghr|github_pat|sk-)[A-Za-z0-9_-]{16,}\b/u.test(
+        value,
+      )
+    ) {
+      throw new OrchestratorError(
+        "INVALID_PHASE_16_5_EVIDENCE",
+        `${path} contains credential-like content`,
+      );
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) =>
+      assertSafePhase165Payload(entry, `${path}[${index}]`),
+    );
+    return;
+  }
+  if (typeof value === "object" && value !== null) {
+    for (const [key, entry] of Object.entries(value)) {
+      if (/(token|secret|password|api[_-]?key|credential)/iu.test(key)) {
+        throw new OrchestratorError(
+          "INVALID_PHASE_16_5_EVIDENCE",
+          `${path}.${key} is a forbidden sensitive field`,
+        );
+      }
+      assertSafePhase165Payload(entry, `${path}.${key}`);
+    }
+    return;
+  }
+  throw new OrchestratorError(
+    "INVALID_PHASE_16_5_EVIDENCE",
+    `${path} contains a non-JSON value`,
+  );
+}
 
 export interface StateStore {
   readonly readOnly: boolean;
@@ -152,12 +217,36 @@ export interface StateStore {
     recoveredRunIds: readonly string[];
     quarantinedRunIds: readonly string[];
   };
+  assertActiveDispatchLeases(input: {
+    runId: string;
+    issueNumber: number;
+    worktreeId: string;
+    holderPid: number;
+    now: Date;
+  }): {
+    issueLease: LeaseRecord;
+    worktreeLease: LeaseRecord;
+  };
+  assertPlanApprovalBinding(input: {
+    runId: string;
+    binding: PlanApprovalBinding;
+    now: Date;
+  }): void;
   recordApprovalEffect(input: {
     observedApproval: ObservedApproval;
     effect: ApprovalKind;
     runId: string;
     observedAt: Date;
   }): { recorded: boolean };
+  recordPhase165Event(input: {
+    runId: string;
+    eventType: Phase165EventType;
+    correlationId: string;
+    evidenceRef: string;
+    result: "OK" | "DENIED" | "ERROR";
+    payload: Readonly<Record<string, unknown>>;
+    now: Date;
+  }): void;
   listAuditEvents(runId: string): readonly AuditEventRecord[];
   close(): void;
 }
@@ -2089,6 +2178,123 @@ export class SqliteStateStore implements StateStore {
     });
   }
 
+  assertPlanApprovalBinding(input: {
+    runId: string;
+    binding: PlanApprovalBinding;
+    now: Date;
+  }): void {
+    this.assertEffectsAllowed(input.runId);
+    const run = this.getRun(input.runId);
+    if (!run || run.state !== "PLAN_APPROVED") {
+      throw new OrchestratorError(
+        "PLAN_APPROVAL_BINDING_MISMATCH",
+        "Work package requires a run with a current PLAN_APPROVED state",
+      );
+    }
+    const row = this.#db
+      .prepare(
+        `SELECT * FROM approvals
+         WHERE run_id = ? AND effect = 'PLAN_APPROVED'
+           AND approval_event_id = ? AND approval_comment_id = ?
+           AND approval_author_login = ?
+           AND approval_comment_updated_at = ?
+           AND expires_at = ? AND expires_at > ?
+           AND revalidation_epoch = ?
+         LIMIT 1`,
+      )
+      .get(
+        input.runId,
+        input.binding.approvalEventId,
+        input.binding.approvalCommentId,
+        input.binding.approvalAuthorLogin,
+        input.binding.approvalCommentUpdatedAt,
+        input.binding.expiresAt,
+        input.now.toISOString(),
+        run.revalidationEpoch,
+      );
+    if (!row) {
+      throw new OrchestratorError(
+        "PLAN_APPROVAL_BINDING_MISMATCH",
+        "Persisted PLAN_APPROVED event does not match the work package binding",
+      );
+    }
+    const body = JSON.parse(String(asRow(row).body_json)) as Record<
+      string,
+      unknown
+    >;
+    if (
+      body.base_sha !== input.binding.baseSha ||
+      body.plan_hash !== input.binding.planHash ||
+      body.source_snapshot_hash !== input.binding.sourceSnapshotHash
+    ) {
+      throw new OrchestratorError(
+        "PLAN_APPROVAL_BINDING_MISMATCH",
+        "PLAN_APPROVED protected hashes do not match the work package",
+      );
+    }
+  }
+
+  assertActiveDispatchLeases(input: {
+    runId: string;
+    issueNumber: number;
+    worktreeId: string;
+    holderPid: number;
+    now: Date;
+  }): {
+    issueLease: LeaseRecord;
+    worktreeLease: LeaseRecord;
+  } {
+    this.assertEffectsAllowed(input.runId);
+    const run = this.getRun(input.runId);
+    if (
+      !run ||
+      run.issueNumber !== input.issueNumber ||
+      run.worktreeId !== input.worktreeId ||
+      run.state !== "RUNNING_IMPLEMENTATION"
+    ) {
+      throw new OrchestratorError(
+        "LEASE_CONTEXT_MISMATCH",
+        "Run state, issue or worktree does not match the dispatch lease context",
+      );
+    }
+    const issueRow = this.#db
+      .prepare(
+        `SELECT * FROM leases
+         WHERE run_id = ? AND kind = 'ISSUE' AND issue_number = ?
+           AND status = 'ACTIVE' AND holder_pid = ? AND expires_at > ?
+         LIMIT 1`,
+      )
+      .get(
+        input.runId,
+        input.issueNumber,
+        input.holderPid,
+        input.now.toISOString(),
+      );
+    const worktreeRow = this.#db
+      .prepare(
+        `SELECT * FROM leases
+         WHERE run_id = ? AND kind = 'WORKTREE' AND worktree_id = ?
+           AND status = 'ACTIVE' AND holder_pid = ? AND expires_at > ?
+         LIMIT 1`,
+      )
+      .get(
+        input.runId,
+        input.worktreeId,
+        input.holderPid,
+        input.now.toISOString(),
+      );
+    if (!issueRow || !worktreeRow) {
+      throw new OrchestratorError(
+        "ACTIVE_DISPATCH_LEASE_REQUIRED",
+        "A current issue/worktree lease pair is required",
+      );
+    }
+    return {
+      issueLease: toLease(asRow(issueRow)),
+      worktreeLease: toLease(asRow(worktreeRow)),
+    };
+  }
+
   #assertApprovalBinding(
     run: RunRecord,
     observed: ObservedApproval,
@@ -2311,6 +2517,56 @@ export class SqliteStateStore implements StateStore {
       }
       throw error;
     }
+  }
+
+  recordPhase165Event(input: {
+    runId: string;
+    eventType: Phase165EventType;
+    correlationId: string;
+    evidenceRef: string;
+    result: "OK" | "DENIED" | "ERROR";
+    payload: Readonly<Record<string, unknown>>;
+    now: Date;
+  }): void {
+    this.assertEffectsAllowed(input.runId);
+    if (
+      !PHASE_16_5_EVENT_TYPES.has(input.eventType) ||
+      !["OK", "DENIED", "ERROR"].includes(input.result) ||
+      !/^(?:sha256:[a-f0-9]{64}|git:[a-f0-9]{40})$/u.test(input.evidenceRef) ||
+      !input.correlationId ||
+      input.correlationId.includes("\0")
+    ) {
+      throw new OrchestratorError(
+        "INVALID_PHASE_16_5_EVIDENCE",
+        "Phase 16.5 audit evidence reference is invalid",
+      );
+    }
+    assertSafePhase165Payload(input.payload);
+    if (JSON.stringify(input.payload).length > 64 * 1024) {
+      throw new OrchestratorError(
+        "INVALID_PHASE_16_5_EVIDENCE",
+        "Phase 16.5 audit payload exceeds the size limit",
+      );
+    }
+    if (!this.getRun(input.runId)) {
+      throw new OrchestratorError(
+        "RUN_NOT_FOUND",
+        `Run ${input.runId} was not found`,
+      );
+    }
+    this.#withImmediate(() => {
+      this.#appendAudit({
+        correlationId: input.correlationId,
+        runId: input.runId,
+        eventType: input.eventType,
+        payload: input.payload,
+        now: input.now,
+        actorType: "ORCHESTRATOR",
+        actorId: "anklo-orchestrator",
+        result: input.result,
+        evidenceRef: input.evidenceRef,
+      });
+    });
   }
 
   listAuditEvents(runId: string): readonly AuditEventRecord[] {

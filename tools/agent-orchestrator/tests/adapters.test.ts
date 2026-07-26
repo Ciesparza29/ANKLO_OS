@@ -1,187 +1,226 @@
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
+import { GitHubReadOnlyAdapter } from "../src/github-adapter.ts";
 import {
-  GitHubReadOnlyAdapter,
-  type GitHubReadOnlyClient,
-} from "../src/github-adapter.ts";
-import { CodexReadOnlyAdapter } from "../src/codex-adapter.ts";
+  CodexReadOnlyAdapter,
+  parseCodexJsonLines,
+} from "../src/codex-adapter.ts";
 import { WorktreeManager } from "../src/worktree.ts";
 
-const tempDirs: string[] = [];
+const projectRoot = realpathSync(
+  join(dirname(fileURLToPath(import.meta.url)), "../../.."),
+);
+const outputSchemaPath = join(
+  projectRoot,
+  "tools/agent-orchestrator/schemas/codex-review-result.schema.json",
+);
+const temporaryDirectories: string[] = [];
+const originalPath = process.env.PATH;
 
-function createTempDir(prefix = "anklo-adp-script-"): string {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
-  tempDirs.push(dir);
-  return dir;
+function temporaryDirectory(prefix: string): string {
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  temporaryDirectories.push(directory);
+  return directory;
 }
 
-function createTempGitRepo(name = "test-adapter-repo"): string {
-  const dir = createTempDir("anklo-adp-repo-");
-  const repoDir = join(dir, name);
-  spawnSync("mkdir", ["-p", repoDir]);
-  spawnSync("git", ["init", "-b", "feat/test-branch"], { cwd: repoDir });
-  spawnSync("git", ["config", "user.email", "test@anklo.local"], {
-    cwd: repoDir,
+function executable(path: string, contents: string): void {
+  writeFileSync(path, contents, { encoding: "utf8", mode: 0o755 });
+}
+
+function git(cwd: string, args: readonly string[]): string {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    shell: false,
   });
-  spawnSync("git", ["config", "user.name", "Test User"], { cwd: repoDir });
-  spawnSync("touch", ["README.md"], { cwd: repoDir });
-  spawnSync("git", ["add", "README.md"], { cwd: repoDir });
-  spawnSync("git", ["commit", "-m", "initial commit"], { cwd: repoDir });
-  return repoDir;
+  if (result.status !== 0) throw new Error(result.stderr);
+  return result.stdout.trim();
+}
+
+function createWorktree(): {
+  root: string;
+  main: string;
+  worktree: string;
+  head: string;
+} {
+  const root = temporaryDirectory("anklo-adapter-test-");
+  const main = join(root, "main");
+  const worktree = join(root, "worktree");
+  mkdirSync(main);
+  git(main, ["init", "-b", "main"]);
+  git(main, ["config", "user.email", "test@anklo.local"]);
+  git(main, ["config", "user.name", "Test User"]);
+  git(main, [
+    "remote",
+    "add",
+    "origin",
+    "https://github.com/Ciesparza29/ANKLO_OS.git",
+  ]);
+  writeFileSync(join(main, "README.md"), "test\n", "utf8");
+  git(main, ["add", "README.md"]);
+  git(main, ["commit", "-m", "initial"]);
+  const head = git(main, ["rev-parse", "HEAD"]);
+  git(main, ["worktree", "add", "-b", "feat/review", worktree, head]);
+  return { root, main, worktree, head };
+}
+
+function managerFor(repo: ReturnType<typeof createWorktree>): WorktreeManager {
+  return new WorktreeManager({
+    allowlistedRepository: "Ciesparza29/ANKLO_OS",
+    allowlistedWorktrees: [repo.worktree],
+    allowedParentDirectories: [repo.root],
+    protectedWorktreePaths: [repo.main],
+  });
 }
 
 afterEach(() => {
-  while (tempDirs.length > 0) {
-    const dir = tempDirs.pop();
-    if (dir) rmSync(dir, { recursive: true, force: true });
+  process.env.PATH = originalPath;
+  while (temporaryDirectories.length > 0) {
+    const directory = temporaryDirectories.pop();
+    if (directory) rmSync(directory, { recursive: true, force: true });
   }
 });
 
-describe("Read-Only GitHub Adapter (ADR-0010 Section 7 & 8)", () => {
-  const mockClient: GitHubReadOnlyClient = {
-    fetchIssue: (number) => ({
-      number,
-      title: "Test Issue",
-      body: "Exact UTF-8 Issue Body Content",
-      state: "open",
-    }),
-    fetchPullRequest: (number) => ({
-      number,
-      headSha: "a".repeat(40),
-      baseSha: "b".repeat(40),
-      state: "open",
-    }),
-  };
-
-  it("fetches issue data and calculates exact SHA-256 issue body hash", () => {
-    const adapter = new GitHubReadOnlyAdapter(mockClient);
-    expect(adapter.getIssue(24).title).toBe("Test Issue");
-    expect(adapter.getExactIssueBody(24)).toBe(
-      "Exact UTF-8 Issue Body Content",
+describe("concrete read-only GitHub adapter", () => {
+  function adapter(): GitHubReadOnlyAdapter {
+    const root = temporaryDirectory("anklo-gh-test-");
+    const bin = join(root, "bin");
+    const config = join(root, "gh-config");
+    mkdirSync(bin);
+    mkdirSync(config);
+    executable(
+      join(bin, "gh"),
+      `#!/bin/sh
+case "$1 $2" in
+  "issue view")
+    printf '%s\\n' '{"number":24,"title":"Issue","body":"Exact UTF-8 body","state":"OPEN"}'
+    ;;
+  "pr view")
+    printf '%s\\n' '{"number":25,"headRefOid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","baseRefOid":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","state":"OPEN"}'
+    ;;
+  "api --method")
+    test "$3" = "GET" || exit 91
+    printf '%s\\n' '{"read_only":true}'
+    ;;
+  *)
+    exit 92
+    ;;
+esac
+`,
     );
-    expect(adapter.computeIssueBodyHash(24)).toMatch(/^[0-9a-f]{64}$/);
+    process.env.PATH = `${bin}:${originalPath ?? ""}`;
+    return new GitHubReadOnlyAdapter({
+      repository: "Ciesparza29/ANKLO_OS",
+      ghConfigDirectory: config,
+    });
+  }
+
+  it("allows only fixed issue, PR and forced-GET API reads", () => {
+    const github = adapter();
+    expect(github.getIssue(24).body).toBe("Exact UTF-8 body");
+    expect(github.computeIssueBodyHash(24)).toMatch(/^[0-9a-f]{64}$/u);
+    expect(github.getPullRequest(25).headSha).toBe("a".repeat(40));
+    expect(github.apiGet({ kind: "issue", number: 24 })).toEqual({
+      read_only: true,
+    });
+    expect(
+      github.apiGet({ kind: "check-runs", commitSha: "a".repeat(40) }),
+    ).toEqual({
+      read_only: true,
+    });
   });
 
-  it("strictly forbids any mutating or writing operations", () => {
-    const adapter = new GitHubReadOnlyAdapter(mockClient);
-    expect(() => adapter.push()).toThrow(/strictly read-only/);
-    expect(() => adapter.createPullRequest()).toThrow(/strictly read-only/);
-    expect(() => adapter.modifyPullRequest()).toThrow(/strictly read-only/);
-    expect(() => adapter.mergePullRequest()).toThrow(/strictly read-only/);
-    expect(() => adapter.createComment()).toThrow(/strictly read-only/);
-    expect(() => adapter.modifyIssue()).toThrow(/strictly read-only/);
-    expect(() => adapter.closeIssue()).toThrow(/strictly read-only/);
+  it("rejects invalid resource identifiers before invoking gh", () => {
+    const github = adapter();
+    expect(() => github.getIssue(0)).toThrow(/positive integer/u);
+    expect(() =>
+      github.apiGet({ kind: "check-runs", commitSha: "main" }),
+    ).toThrow(/invalid/u);
+    expect("createComment" in github).toBe(false);
+    expect("mergePullRequest" in github).toBe(false);
   });
 });
 
-describe("Read-Only Codex Adapter (ADR-0010 Section 11)", () => {
-  it("invokes codex and parses structured JSON decision with git evidence verification", () => {
-    const repoDir = createTempGitRepo();
-    const scriptDir = createTempDir("anklo-adp-scripts-");
-    const headSha = spawnSync("git", ["rev-parse", "HEAD"], {
-      cwd: repoDir,
-      encoding: "utf8",
-    }).stdout.trim();
+describe("Codex 0.144.6 read-only adapter", () => {
+  function installMockCodex(root: string, body: string): void {
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    executable(join(bin, "codex"), body);
+    process.env.PATH = `${bin}:${originalPath ?? ""}`;
+  }
 
-    const mockCodexScript = join(scriptDir, "mock-codex.sh");
-    writeFileSync(
-      mockCodexScript,
-      `#!/bin/sh\necho '{"decision": "APPROVE", "summary": "All tests pass", "findings": ["Clean code"]}'\n`,
-      { mode: 0o755 },
+  it("uses isolated config, empty MCP configuration and parses JSONL", async () => {
+    const repo = createWorktree();
+    installMockCodex(
+      repo.root,
+      `#!/bin/sh
+all="$*"
+case "$all" in
+  *"--ignore-user-config"*"mcp_servers={}"*"--sandbox read-only"*"--ephemeral"*"--json"*"--output-schema"*"--cd"*) ;;
+  *) exit 93 ;;
+esac
+printf '%s\\n' '{"type":"thread.started","thread_id":"test"}'
+printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\\"decision\\":\\"APPROVE\\",\\"summary\\":\\"Verified\\",\\"findings\\":[]}"}}'
+`,
     );
-
-    const wtManager = new WorktreeManager({
-      allowlistedRepository: "Ciesparza29/ANKLO_OS",
-      allowlistedWorktrees: [repoDir],
+    const runtime = join(repo.root, "codex-home");
+    const adapter = new CodexReadOnlyAdapter(managerFor(repo), {
+      runtimeDirectory: runtime,
+      outputSchemaPath,
+      timeoutMs: 5_000,
+      maxOutputBytes: 64 * 1024,
     });
-
-    const adapter = new CodexReadOnlyAdapter(wtManager, {
-      codexBinary: mockCodexScript,
-      timeoutMs: 5000,
-      maxOutputBytes: 1024,
-    });
-
-    const rev = adapter.reviewWorktree(
-      repoDir,
-      headSha,
-      "Please review this worktree",
+    const result = await adapter.reviewWorktree(
+      repo.worktree,
+      repo.head,
+      "Review this exact worktree",
     );
-    expect(rev.result.decision).toBe("APPROVE");
-    expect(rev.result.summary).toBe("All tests pass");
-    expect(rev.result.findings).toEqual(["Clean code"]);
-    expect(rev.beforeEvidence.headSha).toBe(headSha);
-    expect(rev.afterEvidence.headSha).toBe(headSha);
-    expect(rev.afterEvidence.isClean).toBe(true);
+    expect(result.result.decision).toBe("APPROVE");
+    expect(result.beforeEvidence.headSha).toBe(result.afterEvidence.headSha);
   });
 
-  it("defaults to NOT_VERIFIABLE decision when JSON parsing fails", () => {
-    const repoDir = createTempGitRepo();
-    const scriptDir = createTempDir("anklo-adp-scripts-");
-    const headSha = spawnSync("git", ["rev-parse", "HEAD"], {
-      cwd: repoDir,
-      encoding: "utf8",
-    }).stdout.trim();
-
-    const mockCodexScript = join(scriptDir, "mock-codex-bad.sh");
-    writeFileSync(mockCodexScript, `#!/bin/sh\necho 'not a json'\n`, {
-      mode: 0o755,
+  it("rejects mutation during Codex execution", async () => {
+    const repo = createWorktree();
+    installMockCodex(
+      repo.root,
+      `#!/bin/sh
+touch dirty-by-codex.txt
+printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\\"decision\\":\\"APPROVE\\",\\"summary\\":\\"Unsafe\\",\\"findings\\":[]}"}}'
+`,
+    );
+    const adapter = new CodexReadOnlyAdapter(managerFor(repo), {
+      runtimeDirectory: join(repo.root, "codex-home"),
+      outputSchemaPath,
     });
-
-    const wtManager = new WorktreeManager({
-      allowlistedRepository: "Ciesparza29/ANKLO_OS",
-      allowlistedWorktrees: [repoDir],
-    });
-
-    const adapter = new CodexReadOnlyAdapter(wtManager, {
-      codexBinary: mockCodexScript,
-    });
-    const rev = adapter.reviewWorktree(repoDir, headSha, "review");
-    expect(rev.result.decision).toBe("NOT_VERIFIABLE");
-    expect(rev.result.summary).toContain("Failed to parse");
+    await expect(
+      adapter.reviewWorktree(repo.worktree, repo.head, "review"),
+    ).rejects.toThrow(/must be clean/u);
   });
 
-  it("detects and rejects git mutations during codex execution", () => {
-    const repoDir = createTempGitRepo();
-    const scriptDir = createTempDir("anklo-adp-scripts-");
-    const headSha = spawnSync("git", ["rev-parse", "HEAD"], {
-      cwd: repoDir,
-      encoding: "utf8",
-    }).stdout.trim();
-
-    const mockCodexMutator = join(scriptDir, "mock-codex-mutator.sh");
-    writeFileSync(
-      mockCodexMutator,
-      `#!/bin/sh\ntouch "${join(repoDir, "dirty.txt")}"\necho '{"decision":"APPROVE","summary":"ok","findings":[]}'\n`,
-      { mode: 0o755 },
+  it("denies malformed, multiple, unknown-field and trailing output", () => {
+    const valid =
+      '{"type":"item.completed","item":{"type":"agent_message","text":"{\\"decision\\":\\"BLOCKED\\",\\"summary\\":\\"blocked\\",\\"findings\\":[]}"}}';
+    expect(parseCodexJsonLines(valid).decision).toBe("BLOCKED");
+    expect(() => parseCodexJsonLines(`${valid}\n${valid}`)).toThrow(
+      /exactly one/u,
     );
-
-    const wtManager = new WorktreeManager({
-      allowlistedRepository: "Ciesparza29/ANKLO_OS",
-      allowlistedWorktrees: [repoDir],
-    });
-
-    const adapter = new CodexReadOnlyAdapter(wtManager, {
-      codexBinary: mockCodexMutator,
-    });
-    expect(() => adapter.reviewWorktree(repoDir, headSha, "review")).toThrow(
-      /worktree git state or clean status was altered/,
+    expect(() => parseCodexJsonLines(`${valid}\ntrailing`)).toThrow(
+      /trailing text/u,
     );
-  });
-
-  it("strictly forbids authoritative or mutating methods", () => {
-    const wtManager = new WorktreeManager({
-      allowlistedRepository: "repo",
-      allowlistedWorktrees: [],
-    });
-    const adapter = new CodexReadOnlyAdapter(wtManager);
-    expect(() => adapter.approvePlan()).toThrow(
-      /no authority to approve requirements/,
-    );
-    expect(() => adapter.commit()).toThrow(/forbids git commit/);
-    expect(() => adapter.push()).toThrow(/forbids git push/);
-    expect(() => adapter.merge()).toThrow(/forbids git merge/);
+    expect(() =>
+      parseCodexJsonLines(
+        '{"type":"item.completed","item":{"type":"agent_message","text":"{\\"decision\\":\\"APPROVE\\",\\"summary\\":\\"x\\",\\"findings\\":[],\\"extra\\":true}"}}',
+      ),
+    ).toThrow(/unknown fields/u);
   });
 });
