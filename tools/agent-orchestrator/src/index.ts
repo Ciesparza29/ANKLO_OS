@@ -5,5 +5,6 @@ export * from "./orchestrator.ts";
 export * from "./policy.ts";
 export * from "./state-machine.ts";
 export * from "./state-store.ts";
+export * from "./verification-runner.ts";
 export * from "./work-package.ts";
 export * from "./worktree.ts";
