@@ -124,7 +124,7 @@ describe("SQLite state store", () => {
   it("verifies schema version, WAL, foreign keys, timeout and integrity", () => {
     const { store } = createStore();
     expect(store.runtimeDiagnostics()).toEqual({
-      schemaVersion: 5,
+      schemaVersion: 6,
       journalMode: "wal",
       foreignKeys: true,
       busyTimeoutMs: 5000,
@@ -516,5 +516,54 @@ describe("SQLite state store", () => {
     );
     expect(existsSync(`${path}.quarantine.json`)).toBe(true);
     expect(() => SqliteStateStore.open(path)).toThrow(/quarantine marker/u);
+  });
+  it("persists an immutable operational trust binding", () => {
+    const { store } = createStore();
+
+    createRun(store, "run-trust");
+
+    const input = {
+      runId: "run-trust",
+      trustManifestHash: "1".repeat(64),
+      repositoryIdentityHash: "2".repeat(64),
+      toolIdentities: [
+        {
+          name: "node",
+          resolvedPath: "/usr/bin/node",
+          realpath: "/usr/bin/node",
+          sha256: "3".repeat(64),
+          version: "24.18.0",
+        },
+      ],
+      lockfileHash: "4".repeat(64),
+      workspaceManifestHash: "5".repeat(64),
+      analyzerVersion: "1.0.0",
+      remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
+      commonGitDirIdentity: "6".repeat(64),
+      correlationId: "run-trust",
+      now: new Date("2026-07-26T23:00:00.000Z"),
+    };
+
+    const first = store.bindRunTrust(input);
+
+    expect(first.trustManifestHash).toBe(input.trustManifestHash);
+    expect(first.repositoryIdentityHash).toBe(input.repositoryIdentityHash);
+    expect(first.toolIdentities).toEqual(input.toolIdentities);
+    expect(first.lockfileHash).toBe(input.lockfileHash);
+    expect(first.workspaceManifestHash).toBe(input.workspaceManifestHash);
+    expect(first.analyzerVersion).toBe(input.analyzerVersion);
+    expect(first.remoteIdentity).toBe(input.remoteIdentity);
+    expect(first.commonGitDirIdentity).toBe(input.commonGitDirIdentity);
+
+    expect(store.bindRunTrust(input)).toEqual(first);
+
+    expect(() =>
+      store.bindRunTrust({
+        ...input,
+        trustManifestHash: "9".repeat(64),
+      }),
+    ).toThrow(/immutable and does not match/u);
+
+    store.close();
   });
 });

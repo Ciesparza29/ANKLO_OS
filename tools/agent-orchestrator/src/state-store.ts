@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { ApprovalKind, ObservedApproval } from "./approvals.ts";
 import { OrchestratorError } from "./errors.ts";
+import type { ToolIdentity } from "./operational-trust.ts";
 import {
   assertTransition,
   isRunState,
@@ -14,7 +15,8 @@ import {
   type PlanApprovalBinding,
 } from "./work-package.ts";
 
-const STATE_SCHEMA_VERSION = 5;
+const STATE_SCHEMA_VERSION = 6;
+const TRUST_HASH_PATTERN = /^[a-f0-9]{64}$/u;
 const BUSY_TIMEOUT_MS = 5_000;
 
 export type PersistedWorkPackageReference = Readonly<{
@@ -42,11 +44,33 @@ export type RunRecord = Readonly<{
   packageHash: string | null;
   packageReference: PersistedWorkPackageReference | null;
   planApprovalBinding: PlanApprovalBinding | null;
+  trustManifestHash: string | null;
+  repositoryIdentityHash: string | null;
+  toolIdentities: readonly ToolIdentity[] | null;
+  lockfileHash: string | null;
+  workspaceManifestHash: string | null;
+  analyzerVersion: string | null;
+  remoteIdentity: string | null;
+  commonGitDirIdentity: string | null;
   pullRequestNumber: number | null;
   pullRequestHeadSha: string | null;
   revalidationEpoch: number;
   createdAt: string;
   updatedAt: string;
+}>;
+
+export type BindRunTrustInput = Readonly<{
+  runId: string;
+  trustManifestHash: string;
+  repositoryIdentityHash: string;
+  toolIdentities: readonly ToolIdentity[];
+  lockfileHash: string;
+  workspaceManifestHash: string;
+  analyzerVersion: string;
+  remoteIdentity: string;
+  commonGitDirIdentity: string;
+  correlationId: string;
+  now: Date;
 }>;
 
 export type LeaseRecord = Readonly<{
@@ -180,6 +204,7 @@ export interface StateStore {
     sourceSnapshotHash: string;
     now: Date;
   }): { created: boolean; run: RunRecord };
+  bindRunTrust(input: BindRunTrustInput): RunRecord;
   getRun(runId: string): RunRecord | null;
   bindImplementationTarget(input: {
     runId: string;
@@ -291,6 +316,14 @@ const SCHEMA_SPEC = {
       "package_byte_length",
       "package_schema_version",
       "plan_approval_binding_json",
+      "trust_manifest_hash",
+      "repository_identity_hash",
+      "tool_identities_json",
+      "lockfile_hash",
+      "workspace_manifest_hash",
+      "analyzer_version",
+      "remote_identity",
+      "common_git_dir_identity",
       "pull_request_number",
       "pull_request_head_sha",
       "created_at",
@@ -408,6 +441,73 @@ function scalarString(value: unknown): string {
   return String(Object.values(row)[0] ?? "");
 }
 
+function parseToolIdentities(value: unknown): readonly ToolIdentity[] | null {
+  if (value === null) {
+    return null;
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(String(value)) as unknown;
+  } catch {
+    throw new OrchestratorError(
+      "STATE_STORE_CORRUPT",
+      "Persisted tool identities are not valid JSON",
+    );
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new OrchestratorError(
+      "STATE_STORE_CORRUPT",
+      "Persisted tool identities must be a non-empty array",
+    );
+  }
+
+  const identities = parsed.map((entry) => {
+    if (typeof entry !== "object" || entry === null) {
+      throw new OrchestratorError(
+        "STATE_STORE_CORRUPT",
+        "Persisted tool identity must be an object",
+      );
+    }
+
+    const record = entry as Record<string, unknown>;
+
+    for (const field of [
+      "name",
+      "resolvedPath",
+      "realpath",
+      "sha256",
+      "version",
+    ] as const) {
+      if (typeof record[field] !== "string" || record[field].length === 0) {
+        throw new OrchestratorError(
+          "STATE_STORE_CORRUPT",
+          `Persisted tool identity has invalid ${field}`,
+        );
+      }
+    }
+
+    if (!TRUST_HASH_PATTERN.test(String(record.sha256))) {
+      throw new OrchestratorError(
+        "STATE_STORE_CORRUPT",
+        "Persisted tool identity has an invalid SHA-256 digest",
+      );
+    }
+
+    return Object.freeze({
+      name: String(record.name),
+      resolvedPath: String(record.resolvedPath),
+      realpath: String(record.realpath),
+      sha256: String(record.sha256),
+      version: String(record.version),
+    });
+  });
+
+  return Object.freeze(identities);
+}
+
 function toRun(row: DbRow): RunRecord {
   const state = String(row.state);
   if (!isRunState(state)) {
@@ -443,6 +543,26 @@ function toRun(row: DbRow): RunRecord {
         : parsePlanApprovalBinding(
             JSON.parse(String(row.plan_approval_binding_json)),
           ),
+    trustManifestHash:
+      row.trust_manifest_hash === null ? null : String(row.trust_manifest_hash),
+    repositoryIdentityHash:
+      row.repository_identity_hash === null
+        ? null
+        : String(row.repository_identity_hash),
+    toolIdentities: parseToolIdentities(row.tool_identities_json),
+    lockfileHash: row.lockfile_hash === null ? null : String(row.lockfile_hash),
+    workspaceManifestHash:
+      row.workspace_manifest_hash === null
+        ? null
+        : String(row.workspace_manifest_hash),
+    analyzerVersion:
+      row.analyzer_version === null ? null : String(row.analyzer_version),
+    remoteIdentity:
+      row.remote_identity === null ? null : String(row.remote_identity),
+    commonGitDirIdentity:
+      row.common_git_dir_identity === null
+        ? null
+        : String(row.common_git_dir_identity),
     packageReference:
       row.package_hash === null ||
       row.package_relative_path == null ||
@@ -663,11 +783,16 @@ export class SqliteStateStore implements StateStore {
       this.#migrateV2toV3();
       this.#migrateV3toV4();
       this.#migrateV4toV5();
+      this.#migrateV5toV6(false);
     } else if (userVersion === 3) {
       this.#migrateV3toV4();
       this.#migrateV4toV5();
+      this.#migrateV5toV6(false);
     } else if (userVersion === 4) {
       this.#migrateV4toV5();
+      this.#migrateV5toV6(false);
+    } else if (userVersion === 5) {
+      this.#migrateV5toV6(true);
     } else if (userVersion !== STATE_SCHEMA_VERSION) {
       throw new OrchestratorError(
         "STATE_STORE_SCHEMA_UNSUPPORTED",
@@ -713,6 +838,14 @@ export class SqliteStateStore implements StateStore {
         package_byte_length INTEGER,
         package_schema_version TEXT,
         plan_approval_binding_json TEXT,
+        trust_manifest_hash TEXT,
+        repository_identity_hash TEXT,
+        tool_identities_json TEXT,
+        lockfile_hash TEXT,
+        workspace_manifest_hash TEXT,
+        analyzer_version TEXT,
+        remote_identity TEXT,
+        common_git_dir_identity TEXT,
         pull_request_number INTEGER,
         pull_request_head_sha TEXT,
         created_at TEXT NOT NULL,
@@ -920,6 +1053,50 @@ export class SqliteStateStore implements StateStore {
 
       this.#db.exec(
         `UPDATE schema_meta SET version = ${STATE_SCHEMA_VERSION}, applied_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE singleton_id = 1`,
+      );
+
+      this.#db.exec(`PRAGMA user_version = ${STATE_SCHEMA_VERSION};`);
+    });
+  }
+
+  #migrateV5toV6(createBackup: boolean): void {
+    const preCheck = scalarString(
+      this.#db.prepare("PRAGMA integrity_check").get(),
+    );
+
+    if (preCheck !== "ok") {
+      throw new OrchestratorError(
+        "STATE_STORE_INTEGRITY_FAILED",
+        "Pre-migration integrity check failed",
+        { details: { result: preCheck } },
+      );
+    }
+
+    if (createBackup && this.#databasePath !== ":memory:") {
+      this.#backupDatabase(5);
+    }
+
+    this.#withImmediate(() => {
+      this.#db.exec("ALTER TABLE runs ADD COLUMN trust_manifest_hash TEXT;");
+      this.#db.exec(
+        "ALTER TABLE runs ADD COLUMN repository_identity_hash TEXT;",
+      );
+      this.#db.exec("ALTER TABLE runs ADD COLUMN tool_identities_json TEXT;");
+      this.#db.exec("ALTER TABLE runs ADD COLUMN lockfile_hash TEXT;");
+      this.#db.exec(
+        "ALTER TABLE runs ADD COLUMN workspace_manifest_hash TEXT;",
+      );
+      this.#db.exec("ALTER TABLE runs ADD COLUMN analyzer_version TEXT;");
+      this.#db.exec("ALTER TABLE runs ADD COLUMN remote_identity TEXT;");
+      this.#db.exec(
+        "ALTER TABLE runs ADD COLUMN common_git_dir_identity TEXT;",
+      );
+
+      this.#db.exec(
+        `UPDATE schema_meta
+         SET version = ${STATE_SCHEMA_VERSION},
+             applied_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE singleton_id = 1`,
       );
 
       this.#db.exec(`PRAGMA user_version = ${STATE_SCHEMA_VERSION};`);
@@ -1481,6 +1658,161 @@ export class SqliteStateStore implements StateStore {
         );
       }
       return { created: true, run };
+    });
+  }
+
+  bindRunTrust(input: BindRunTrustInput): RunRecord {
+    for (const [label, digest] of [
+      ["trustManifestHash", input.trustManifestHash],
+      ["repositoryIdentityHash", input.repositoryIdentityHash],
+      ["lockfileHash", input.lockfileHash],
+      ["workspaceManifestHash", input.workspaceManifestHash],
+      ["commonGitDirIdentity", input.commonGitDirIdentity],
+    ] as const) {
+      if (!TRUST_HASH_PATTERN.test(digest)) {
+        throw new OrchestratorError(
+          "INVALID_TRUST_BINDING",
+          `${label} must be a SHA-256 digest`,
+        );
+      }
+    }
+
+    if (
+      input.toolIdentities.length === 0 ||
+      input.analyzerVersion.trim().length === 0 ||
+      input.remoteIdentity.trim().length === 0 ||
+      input.correlationId.trim().length === 0
+    ) {
+      throw new OrchestratorError(
+        "INVALID_TRUST_BINDING",
+        "Trust binding contains an empty required value",
+      );
+    }
+
+    const normalizedTools = Object.freeze(
+      input.toolIdentities.map((identity) => {
+        if (
+          identity.name.trim().length === 0 ||
+          identity.resolvedPath.length === 0 ||
+          identity.realpath.length === 0 ||
+          identity.version.trim().length === 0 ||
+          !TRUST_HASH_PATTERN.test(identity.sha256)
+        ) {
+          throw new OrchestratorError(
+            "INVALID_TRUST_BINDING",
+            "Tool identity is incomplete or invalid",
+          );
+        }
+
+        return Object.freeze({
+          name: identity.name,
+          resolvedPath: identity.resolvedPath,
+          realpath: identity.realpath,
+          sha256: identity.sha256,
+          version: identity.version,
+        });
+      }),
+    );
+
+    const serializedTools = JSON.stringify(normalizedTools);
+    const updatedAt = input.now.toISOString();
+
+    return this.#withImmediate(() => {
+      const current = this.getRun(input.runId);
+
+      if (!current) {
+        throw new OrchestratorError(
+          "RUN_NOT_FOUND",
+          `Run ${input.runId} does not exist`,
+        );
+      }
+
+      const currentBinding = {
+        trustManifestHash: current.trustManifestHash,
+        repositoryIdentityHash: current.repositoryIdentityHash,
+        toolIdentities: current.toolIdentities,
+        lockfileHash: current.lockfileHash,
+        workspaceManifestHash: current.workspaceManifestHash,
+        analyzerVersion: current.analyzerVersion,
+        remoteIdentity: current.remoteIdentity,
+        commonGitDirIdentity: current.commonGitDirIdentity,
+      };
+
+      const isUnbound = Object.values(currentBinding).every(
+        (value) => value === null,
+      );
+
+      const desiredBinding = {
+        trustManifestHash: input.trustManifestHash,
+        repositoryIdentityHash: input.repositoryIdentityHash,
+        toolIdentities: normalizedTools,
+        lockfileHash: input.lockfileHash,
+        workspaceManifestHash: input.workspaceManifestHash,
+        analyzerVersion: input.analyzerVersion,
+        remoteIdentity: input.remoteIdentity,
+        commonGitDirIdentity: input.commonGitDirIdentity,
+      };
+
+      if (!isUnbound) {
+        if (
+          current.trustManifestHash !== desiredBinding.trustManifestHash ||
+          current.repositoryIdentityHash !==
+            desiredBinding.repositoryIdentityHash ||
+          JSON.stringify(current.toolIdentities) !==
+            JSON.stringify(desiredBinding.toolIdentities) ||
+          current.lockfileHash !== desiredBinding.lockfileHash ||
+          current.workspaceManifestHash !==
+            desiredBinding.workspaceManifestHash ||
+          current.analyzerVersion !== desiredBinding.analyzerVersion ||
+          current.remoteIdentity !== desiredBinding.remoteIdentity ||
+          current.commonGitDirIdentity !== desiredBinding.commonGitDirIdentity
+        ) {
+          throw new OrchestratorError(
+            "IMMUTABLE_TRUST_BINDING_MISMATCH",
+            "Run trust binding is immutable and does not match",
+          );
+        }
+
+        return current;
+      }
+
+      this.#db
+        .prepare(
+          `UPDATE runs SET
+             trust_manifest_hash = ?,
+             repository_identity_hash = ?,
+             tool_identities_json = ?,
+             lockfile_hash = ?,
+             workspace_manifest_hash = ?,
+             analyzer_version = ?,
+             remote_identity = ?,
+             common_git_dir_identity = ?,
+             updated_at = ?
+           WHERE run_id = ?`,
+        )
+        .run(
+          desiredBinding.trustManifestHash,
+          desiredBinding.repositoryIdentityHash,
+          serializedTools,
+          desiredBinding.lockfileHash,
+          desiredBinding.workspaceManifestHash,
+          desiredBinding.analyzerVersion,
+          desiredBinding.remoteIdentity,
+          desiredBinding.commonGitDirIdentity,
+          updatedAt,
+          input.runId,
+        );
+
+      const bound = this.getRun(input.runId);
+
+      if (!bound) {
+        throw new OrchestratorError(
+          "STATE_STORE_CORRUPT",
+          "Run disappeared after trust binding",
+        );
+      }
+
+      return bound;
     });
   }
 
