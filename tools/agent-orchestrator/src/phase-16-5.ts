@@ -18,6 +18,7 @@ import {
   type VerificationProfileName,
   type VerificationRunner,
 } from "./verification-runner.ts";
+import { type TrustedExecutionContext } from "./trusted-process.ts";
 import {
   loadPersistedPackageByReference,
   persistWorkPackage,
@@ -109,6 +110,7 @@ function requirePackageReference(
 }
 
 function loadAndRevalidatePackage(
+  context: TrustedExecutionContext,
   run: RunRecord,
   runtimeDirectory: string,
   worktreeManager: WorktreeManager,
@@ -148,6 +150,7 @@ function loadAndRevalidatePackage(
   }
 
   const worktreeEvidence = worktreeManager.validateWorktreeAccess(
+    context,
     pkg.worktreePath,
     pkg.targetHeadSha,
   );
@@ -192,13 +195,17 @@ export class Phase165Service {
     now: Date,
   ): GitEvidence {
     const run = requireRun(this.#stateStore, runId, ["PLAN_APPROVED"]);
+    const context: TrustedExecutionContext = {
+      runId,
+      stateStore: this.#stateStore,
+    };
     if (run.baseSha !== input.baseSha) {
       fail(
         "WORKTREE_RUN_MISMATCH",
         "Worktree base does not match the StateStore run",
       );
     }
-    const evidence = this.#worktreeManager.createWorktree(input);
+    const evidence = this.#worktreeManager.createWorktree(context, input);
     this.#stateStore.recordPhase165Event({
       runId,
       eventType: "WORKTREE_CREATED",
@@ -231,7 +238,12 @@ export class Phase165Service {
       binding: input.workPackage.planApprovalBinding,
       now: input.now,
     });
+    const context: TrustedExecutionContext = {
+      runId: input.workPackage.runId,
+      stateStore: this.#stateStore,
+    };
     const worktreeEvidence = this.#worktreeManager.validateWorktreeAccess(
+      context,
       input.workPackage.worktreePath,
       input.workPackage.targetHeadSha,
     );
@@ -317,7 +329,13 @@ export class Phase165Service {
       );
     }
 
+    const context: TrustedExecutionContext = {
+      runId: input.runId,
+      stateStore: this.#stateStore,
+    };
+
     const pkg = loadAndRevalidatePackage(
+      context,
       run,
       this.#runtimeDirectory,
       this.#worktreeManager,
@@ -339,6 +357,7 @@ export class Phase165Service {
     });
     try {
       const result = await this.#verificationRunner.runProfile(
+        context,
         input.profile,
         pkg.worktreePath,
         pkg.targetHeadSha,
@@ -388,7 +407,11 @@ export class Phase165Service {
     if (run.issueNumber !== input.issueNumber) {
       fail("GITHUB_RUN_MISMATCH", "Issue does not match the StateStore run");
     }
-    const issue = this.#githubAdapter.getIssue(input.issueNumber);
+    const context: TrustedExecutionContext = {
+      runId: input.runId,
+      stateStore: this.#stateStore,
+    };
+    const issue = this.#githubAdapter.getIssue(context, input.issueNumber);
     const bodyHash = createHash("sha256")
       .update(issue.body, "utf8")
       .digest("hex");
@@ -430,7 +453,13 @@ export class Phase165Service {
       );
     }
 
+    const context: TrustedExecutionContext = {
+      runId: input.runId,
+      stateStore: this.#stateStore,
+    };
+
     const pkg = loadAndRevalidatePackage(
+      context,
       run,
       this.#runtimeDirectory,
       this.#worktreeManager,
@@ -446,6 +475,7 @@ export class Phase165Service {
 
     try {
       const execution = await this.#codexAdapter.reviewWorktree(
+        context,
         pkg.worktreePath,
         pkg.targetHeadSha,
         input.prompt,

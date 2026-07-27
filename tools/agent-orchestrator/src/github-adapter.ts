@@ -1,14 +1,13 @@
 import { createHash } from "node:crypto";
-import { runGhCommand } from "./trusted-process.ts";
+import {
+  executeGitHubRead,
+  type TrustedExecutionContext,
+} from "./trusted-process.ts";
 import { existsSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { GIT_SHA_PATTERN, isRecord } from "./contracts.ts";
 import { OrchestratorError } from "./errors.ts";
 
-const GH_EXECUTABLE = "gh";
-const GH_HOST = "github.com";
-const GH_TIMEOUT_MS = 30_000;
-const GH_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u;
 
 export interface GitHubIssue {
@@ -73,8 +72,6 @@ function stringField(record: Record<string, unknown>, field: string): string {
 export class GitHubReadOnlyAdapter {
   readonly #repository: string;
   readonly #ghConfigDirectory: string;
-  readonly #ghExecutablePath: string;
-
   constructor(config: GitHubReadOnlyConfig) {
     if (!REPOSITORY_PATTERN.test(config.repository)) {
       fail("INVALID_GITHUB_CONFIG", "Repository must use owner/name form");
@@ -90,44 +87,15 @@ export class GitHubReadOnlyAdapter {
     }
     this.#repository = config.repository;
     this.#ghConfigDirectory = realpathSync(config.ghConfigDirectory);
-    this.#ghExecutablePath = config.ghExecutablePath ?? GH_EXECUTABLE;
   }
 
-  #run(args: readonly string[]): string {
-    const result = runGhCommand({
-      binaryPath: this.#ghExecutablePath,
-      vector: args,
-      directory: this.#ghConfigDirectory,
-      configDirectory: this.#ghConfigDirectory,
-      timeoutMs: GH_TIMEOUT_MS,
-      maxOutputBytes: GH_MAX_OUTPUT_BYTES,
-    });
-    if (result.error) {
-      fail(
-        "GITHUB_READ_FAILED",
-        `GitHub read could not complete: ${result.error.message}`,
-      );
-    }
-    if (result.status !== 0) {
-      fail(
-        "GITHUB_READ_FAILED",
-        `GitHub read failed with exit code ${String(result.status)}`,
-      );
-    }
-    return result.stdout;
-  }
-
-  getIssue(issueNumber: number): GitHubIssue {
+  getIssue(context: TrustedExecutionContext, issueNumber: number): GitHubIssue {
     const number = requirePositiveInteger(issueNumber, "issueNumber");
-    const output = this.#run([
-      "issue",
-      "view",
-      String(number),
-      "--repo",
-      this.#repository,
-      "--json",
-      "number,title,body,state",
-    ]);
+    const output = executeGitHubRead(
+      context,
+      { kind: "issue-view", number },
+      this.#ghConfigDirectory,
+    );
     const parsed = JSON.parse(output) as unknown;
     if (!isRecord(parsed)) {
       fail("MALFORMED_GITHUB_OUTPUT", "Issue output must be an object");
@@ -151,27 +119,32 @@ export class GitHubReadOnlyAdapter {
     });
   }
 
-  getExactIssueBody(issueNumber: number): string {
-    return this.getIssue(issueNumber).body;
+  getExactIssueBody(
+    context: TrustedExecutionContext,
+    issueNumber: number,
+  ): string {
+    return this.getIssue(context, issueNumber).body;
   }
 
-  computeIssueBodyHash(issueNumber: number): string {
+  computeIssueBodyHash(
+    context: TrustedExecutionContext,
+    issueNumber: number,
+  ): string {
     return createHash("sha256")
-      .update(this.getExactIssueBody(issueNumber), "utf8")
+      .update(this.getExactIssueBody(context, issueNumber), "utf8")
       .digest("hex");
   }
 
-  getPullRequest(prNumber: number): GitHubPullRequest {
+  getPullRequest(
+    context: TrustedExecutionContext,
+    prNumber: number,
+  ): GitHubPullRequest {
     const number = requirePositiveInteger(prNumber, "prNumber");
-    const output = this.#run([
-      "pr",
-      "view",
-      String(number),
-      "--repo",
-      this.#repository,
-      "--json",
-      "number,headRefOid,baseRefOid,state",
-    ]);
+    const output = executeGitHubRead(
+      context,
+      { kind: "pr-view", number },
+      this.#ghConfigDirectory,
+    );
     const parsed = JSON.parse(output) as unknown;
     if (!isRecord(parsed)) {
       fail("MALFORMED_GITHUB_OUTPUT", "Pull request output must be an object");
@@ -204,32 +177,35 @@ export class GitHubReadOnlyAdapter {
     });
   }
 
-  apiGet(resource: GitHubApiResource): unknown {
-    let endpoint: string;
+  apiGet(
+    context: TrustedExecutionContext,
+    resource: GitHubApiResource,
+  ): unknown {
+    let output: string;
     if (resource.kind === "issue") {
-      endpoint = `repos/${this.#repository}/issues/${requirePositiveInteger(
-        resource.number,
-        "issueNumber",
-      )}`;
+      const number = requirePositiveInteger(resource.number, "issueNumber");
+      output = executeGitHubRead(
+        context,
+        { kind: "api-issue", number },
+        this.#ghConfigDirectory,
+      );
     } else if (resource.kind === "pull") {
-      endpoint = `repos/${this.#repository}/pulls/${requirePositiveInteger(
-        resource.number,
-        "prNumber",
-      )}`;
+      const number = requirePositiveInteger(resource.number, "prNumber");
+      output = executeGitHubRead(
+        context,
+        { kind: "api-pull", number },
+        this.#ghConfigDirectory,
+      );
     } else {
       if (!GIT_SHA_PATTERN.test(resource.commitSha)) {
         fail("INVALID_GITHUB_RESOURCE", "commitSha is invalid");
       }
-      endpoint = `repos/${this.#repository}/commits/${resource.commitSha}/check-runs`;
+      output = executeGitHubRead(
+        context,
+        { kind: "api-commit-check-runs", commitSha: resource.commitSha },
+        this.#ghConfigDirectory,
+      );
     }
-    const output = this.#run([
-      "api",
-      "--method",
-      "GET",
-      "--hostname",
-      GH_HOST,
-      endpoint,
-    ]);
     return JSON.parse(output) as unknown;
   }
 }

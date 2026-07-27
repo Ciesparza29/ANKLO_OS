@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
-import { runGitCommand } from "./trusted-process.ts";
+import {
+  executeGitBranchCheck,
+  executeGitQuery,
+  executeGitWorktreeCreate,
+  resolveGitLocation,
+  type TrustedExecutionContext,
+} from "./trusted-process.ts";
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { GIT_SHA_PATTERN } from "./contracts.ts";
 import { OrchestratorError } from "./errors.ts";
-
-const GIT_EXECUTABLE = "git";
-const GIT_TIMEOUT_MS = 30_000;
-const GIT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024;
 const PROTECTED_BRANCHES = new Set([
   "main",
   "master",
@@ -124,29 +126,6 @@ export class WorktreeManager {
     ]);
   }
 
-  #runGit(cwd: string, args: readonly string[]): string {
-    const result = runGitCommand({
-      binaryPath: GIT_EXECUTABLE,
-      vector: ["-c", "core.hooksPath=/dev/null", ...args],
-      directory: cwd,
-      timeoutMs: GIT_TIMEOUT_MS,
-      maxOutputBytes: GIT_MAX_OUTPUT_BYTES,
-    });
-    if (result.error) {
-      fail(
-        "GIT_COMMAND_FAILED",
-        `Git command could not complete: ${result.error.message}`,
-      );
-    }
-    if (result.status !== 0) {
-      fail(
-        "GIT_COMMAND_FAILED",
-        `Git ${args[0] ?? "command"} failed with exit code ${String(result.status)}`,
-      );
-    }
-    return result.stdout;
-  }
-
   #resolveExistingPath(pathInput: string): string {
     if (!existsSync(pathInput)) {
       fail("UNAUTHORIZED_WORKTREE", `Path does not exist: ${pathInput}`);
@@ -158,22 +137,30 @@ export class WorktreeManager {
     }
   }
 
-  #registeredWorktrees(repositoryPath: string): readonly {
+  #registeredWorktrees(
+    context: TrustedExecutionContext,
+    repositoryPath: string,
+  ): readonly {
     path: string;
     branch: string | null;
   }[] {
+    const loc = resolveGitLocation(context, repositoryPath);
     return parseRegisteredWorktrees(
-      this.#runGit(repositoryPath, ["worktree", "list", "--porcelain"]),
+      executeGitQuery(context, loc, "worktree-list"),
     );
   }
 
-  #assertRepositoryIdentity(worktreePath: string): {
+  #assertRepositoryIdentity(
+    context: TrustedExecutionContext,
+    worktreePath: string,
+  ): {
     repository: string;
     commonGitDirectory: string;
     registered: readonly { path: string; branch: string | null }[];
   } {
+    const loc = resolveGitLocation(context, worktreePath);
     const topLevel = this.#resolveExistingPath(
-      this.#runGit(worktreePath, ["rev-parse", "--show-toplevel"]).trim(),
+      executeGitQuery(context, loc, "show-toplevel").trim(),
     );
     if (topLevel !== worktreePath) {
       fail(
@@ -182,7 +169,7 @@ export class WorktreeManager {
       );
     }
     const remote = normalizeRepositoryUrl(
-      this.#runGit(worktreePath, ["remote", "get-url", "origin"]),
+      executeGitQuery(context, loc, "get-remote-origin").trim(),
     );
     if (remote !== this.#config.allowlistedRepository) {
       fail(
@@ -190,14 +177,11 @@ export class WorktreeManager {
         `Repository ${remote} is not allowlisted`,
       );
     }
-    const commonRaw = this.#runGit(worktreePath, [
-      "rev-parse",
-      "--git-common-dir",
-    ]).trim();
+    const commonRaw = executeGitQuery(context, loc, "git-common-dir").trim();
     const commonGitDirectory = this.#resolveExistingPath(
       isAbsolute(commonRaw) ? commonRaw : resolve(worktreePath, commonRaw),
     );
-    const registered = this.#registeredWorktrees(worktreePath);
+    const registered = this.#registeredWorktrees(context, worktreePath);
     const first = registered[0];
     if (first && this.#resolveExistingPath(first.path) === worktreePath) {
       fail(
@@ -233,6 +217,7 @@ export class WorktreeManager {
   }
 
   validateWorktreeAccess(
+    context: TrustedExecutionContext,
     worktreePath: string,
     expectedBaseSha: string,
   ): GitEvidence {
@@ -270,7 +255,7 @@ export class WorktreeManager {
       );
     }
 
-    const identity = this.#assertRepositoryIdentity(realPath);
+    const identity = this.#assertRepositoryIdentity(context, realPath);
     const registered = identity.registered.find(
       (entry) =>
         existsSync(entry.path) &&
@@ -282,7 +267,8 @@ export class WorktreeManager {
         "Implementation target is not a registered Git worktree",
       );
     }
-    const branch = this.#runGit(realPath, ["branch", "--show-current"]).trim();
+    const loc = resolveGitLocation(context, realPath);
+    const branch = executeGitQuery(context, loc, "show-current-branch").trim();
     if (!branch) {
       fail("DETACHED_HEAD_DENIED", "Detached HEAD worktrees are forbidden");
     }
@@ -303,28 +289,24 @@ export class WorktreeManager {
       );
     }
 
-    const headSha = this.#runGit(realPath, ["rev-parse", "HEAD"]).trim();
+    const headSha = executeGitQuery(context, loc, "rev-parse-head").trim();
     if (headSha !== expectedBaseSha) {
       fail(
         "WORKTREE_BASE_SHA_MISMATCH",
         `Expected exact base SHA ${expectedBaseSha}, observed ${headSha}`,
       );
     }
-    const statusPorcelain = this.#runGit(realPath, [
-      "status",
-      "--porcelain=v1",
-      "--untracked-files=all",
-    ]).trim();
+    const statusPorcelain = executeGitQuery(
+      context,
+      loc,
+      "status-porcelain",
+    ).trim();
     if (statusPorcelain !== "") {
       fail("DIRTY_WORKTREE_DENIED", "Implementation worktree must be clean");
     }
-    const index = this.#runGit(realPath, ["ls-files", "--stage"]);
-    const trackedDiff = this.#runGit(realPath, ["diff", "--binary", "HEAD"]);
-    const untracked = this.#runGit(realPath, [
-      "ls-files",
-      "--others",
-      "--exclude-standard",
-    ]);
+    const index = executeGitQuery(context, loc, "ls-files-stage");
+    const trackedDiff = executeGitQuery(context, loc, "diff-binary-head");
+    const untracked = executeGitQuery(context, loc, "ls-files-others");
 
     return Object.freeze({
       headSha,
@@ -365,55 +347,66 @@ export class WorktreeManager {
   }
 
   recordEvidenceBeforeAndAfter<T>(
+    context: TrustedExecutionContext,
     worktreePath: string,
     expectedBaseSha: string,
     action: () => T,
   ): { before: GitEvidence; result: T; after: GitEvidence } {
-    const before = this.validateWorktreeAccess(worktreePath, expectedBaseSha);
+    const before = this.validateWorktreeAccess(
+      context,
+      worktreePath,
+      expectedBaseSha,
+    );
     const result = action();
-    const after = this.validateWorktreeAccess(worktreePath, expectedBaseSha);
+    const after = this.validateWorktreeAccess(
+      context,
+      worktreePath,
+      expectedBaseSha,
+    );
     this.assertEvidenceUnchanged(before, after);
     return { before, result, after };
   }
 
-  createWorktree(input: CreateWorktreeInput): GitEvidence {
+  createWorktree(
+    context: TrustedExecutionContext,
+    input: CreateWorktreeInput,
+  ): GitEvidence {
     if (!GIT_SHA_PATTERN.test(input.baseSha)) {
       fail("INVALID_GIT_SHA", "baseSha must be an exact Git SHA");
     }
     const source = this.#resolveExistingPath(input.sourceRepositoryPath);
     const target = resolve(input.targetPath);
+    const sourceLoc = resolveGitLocation(context, source);
     const sourceTop = this.#resolveExistingPath(
-      this.#runGit(source, ["rev-parse", "--show-toplevel"]).trim(),
+      executeGitQuery(context, sourceLoc, "show-toplevel").trim(),
     );
     if (sourceTop !== source) {
       fail("UNAUTHORIZED_REPOSITORY", "Source must be a repository root");
     }
     const remote = normalizeRepositoryUrl(
-      this.#runGit(source, ["remote", "get-url", "origin"]),
+      executeGitQuery(context, sourceLoc, "get-remote-origin").trim(),
     );
     if (remote !== this.#config.allowlistedRepository) {
       fail("UNAUTHORIZED_REPOSITORY", "Source repository is not allowlisted");
     }
-    const sourceBranch = this.#runGit(source, [
-      "branch",
-      "--show-current",
-    ]).trim();
+    const sourceBranch = executeGitQuery(
+      context,
+      sourceLoc,
+      "show-current-branch",
+    ).trim();
     if (sourceBranch !== "main") {
       fail("WORKTREE_SOURCE_BRANCH_DENIED", "Source clone must be on main");
     }
-    if (this.#runGit(source, ["rev-parse", "HEAD"]).trim() !== input.baseSha) {
+    if (
+      executeGitQuery(context, sourceLoc, "rev-parse-head").trim() !==
+      input.baseSha
+    ) {
       fail(
         "WORKTREE_BASE_SHA_MISMATCH",
         "Source clone is not at the exact authorized base SHA",
       );
     }
-    if (
-      this.#runGit(source, [
-        "status",
-        "--porcelain=v1",
-        "--untracked-files=all",
-      ]).trim() !== ""
-    ) {
+    if (executeGitQuery(context, sourceLoc, "status-porcelain").trim() !== "") {
       fail("DIRTY_SOURCE_DENIED", "Source clone must be clean");
     }
     this.#assertProtectedTarget(target, input.targetBranch);
@@ -429,7 +422,7 @@ export class WorktreeManager {
         "Target parent directory is not allowlisted",
       );
     }
-    const registered = this.#registeredWorktrees(source);
+    const registered = this.#registeredWorktrees(context, source);
     if (
       registered.some(
         (entry) =>
@@ -441,27 +434,18 @@ export class WorktreeManager {
         "Target path or branch already has a registered worktree",
       );
     }
-    const branchExists = runGitCommand({
-      binaryPath: GIT_EXECUTABLE,
-      vector: [
-        "-c",
-        "core.hooksPath=/dev/null",
-        "show-ref",
-        "--verify",
-        "--quiet",
-        `refs/heads/${input.targetBranch}`,
-      ],
-      directory: source,
-      timeoutMs: GIT_TIMEOUT_MS,
-      maxOutputBytes: GIT_MAX_OUTPUT_BYTES,
-    });
+    const branchExists = executeGitBranchCheck(
+      context,
+      sourceLoc,
+      input.targetBranch,
+    );
     if (branchExists.error) {
       fail(
         "GIT_COMMAND_FAILED",
         `Branch collision check failed: ${branchExists.error.message}`,
       );
     }
-    if (branchExists.status === 0) {
+    if (branchExists.exists) {
       fail("WORKTREE_BRANCH_COLLISION", "Target branch already exists");
     }
     if (branchExists.status !== 1) {
@@ -471,14 +455,11 @@ export class WorktreeManager {
       );
     }
 
-    this.#runGit(source, [
-      "worktree",
-      "add",
-      "-b",
-      input.targetBranch,
-      target,
-      input.baseSha,
-    ]);
-    return this.validateWorktreeAccess(target, input.baseSha);
+    executeGitWorktreeCreate(context, sourceLoc, {
+      branch: input.targetBranch,
+      destination: target,
+      baseSha: input.baseSha,
+    });
+    return this.validateWorktreeAccess(context, target, input.baseSha);
   }
 }

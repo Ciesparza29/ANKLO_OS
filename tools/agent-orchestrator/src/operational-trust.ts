@@ -37,6 +37,11 @@ export interface RepositoryIdentity {
   readonly repositoryIdentityHash: string;
 }
 
+export type RepositoryIdentitySeed = Omit<
+  RepositoryIdentity,
+  "repositoryIdentityHash"
+>;
+
 export interface TrustManifest {
   readonly schemaVersion: typeof TRUST_MANIFEST_SCHEMA_VERSION;
   readonly createdAt: string;
@@ -98,25 +103,82 @@ function normalizeToolIdentity(identity: ToolIdentity): ToolIdentity {
   });
 }
 
-function normalizeRepositoryIdentity(
-  identity: RepositoryIdentity,
-): RepositoryIdentity {
-  assertSha256("worktree registration hash", identity.worktreeRegistrationHash);
-  assertSha256("repository identity hash", identity.repositoryIdentityHash);
+export function assertToolIdentityIntegrity(
+  identity: ToolIdentity,
+): ToolIdentity {
+  const normalized = normalizeToolIdentity(identity);
+
+  let canonicalPath: string;
+
+  try {
+    canonicalPath = realpathSync(normalized.resolvedPath);
+  } catch {
+    fail(
+      "TRUSTED_TOOL_IDENTITY_MISMATCH",
+      "Persisted tool path cannot be resolved",
+    );
+  }
+
+  if (!lstatSync(canonicalPath).isFile()) {
+    fail(
+      "TRUSTED_TOOL_IDENTITY_MISMATCH",
+      "Persisted tool path is not a regular file",
+    );
+  }
+
+  const canonicalPersistedPath = realpathSync(normalized.realpath);
+  const currentHash = sha256Bytes(readFileSync(canonicalPath));
 
   if (
-    identity.repositorySlug.trim().length === 0 ||
-    identity.host.trim().length === 0 ||
-    identity.normalizedOrigin.trim().length === 0 ||
-    identity.branch.trim().length === 0 ||
-    identity.headSha.trim().length === 0 ||
-    identity.baseSha.trim().length === 0 ||
-    identity.worktreeId.trim().length === 0 ||
-    identity.remoteIdentity.trim().length === 0
+    canonicalPath !== canonicalPersistedPath ||
+    canonicalPath !== normalized.realpath ||
+    currentHash !== normalized.sha256
   ) {
+    fail(
+      "TRUSTED_TOOL_IDENTITY_MISMATCH",
+      "Persisted tool identity does not match the current executable",
+    );
+  }
+
+  return normalized;
+}
+
+function normalizeRepositoryIdentitySeed(
+  identity: RepositoryIdentitySeed,
+): RepositoryIdentitySeed {
+  assertSha256("worktree registration hash", identity.worktreeRegistrationHash);
+
+  const requiredStrings = [
+    identity.repositorySlug,
+    identity.host,
+    identity.normalizedOrigin,
+    identity.branch,
+    identity.headSha,
+    identity.baseSha,
+    identity.worktreeId,
+    identity.remoteIdentity,
+  ];
+
+  if (requiredStrings.some((value) => value.trim().length === 0)) {
     fail(
       "INVALID_REPOSITORY_IDENTITY",
       "Repository identity contains an empty required value",
+    );
+  }
+
+  const requiredPaths = [
+    identity.repositoryRealpath,
+    identity.worktreeRealpath,
+    identity.mainCloneRealpath,
+    identity.gitDir,
+    identity.commonGitDir,
+    ...identity.protectedPaths,
+  ];
+
+  if (requiredPaths.some((value) => !isAbsolute(value))) {
+    fail(
+      "INVALID_REPOSITORY_IDENTITY",
+      "Repository identity paths must be absolute",
     );
   }
 
@@ -131,24 +193,94 @@ function normalizeRepositoryIdentity(
   }
 
   return Object.freeze({
-    repositorySlug: identity.repositorySlug,
-    host: identity.host,
-    normalizedOrigin: identity.normalizedOrigin,
+    repositorySlug: identity.repositorySlug.trim(),
+    host: identity.host.trim(),
+    normalizedOrigin: identity.normalizedOrigin.trim(),
     repositoryRealpath: identity.repositoryRealpath,
     worktreeRealpath: identity.worktreeRealpath,
     mainCloneRealpath: identity.mainCloneRealpath,
     gitDir: identity.gitDir,
     commonGitDir: identity.commonGitDir,
     worktreeRegistrationHash: identity.worktreeRegistrationHash,
-    branch: identity.branch,
-    headSha: identity.headSha,
-    baseSha: identity.baseSha,
-    worktreeId: identity.worktreeId,
+    branch: identity.branch.trim(),
+    headSha: identity.headSha.trim(),
+    baseSha: identity.baseSha.trim(),
+    worktreeId: identity.worktreeId.trim(),
     issueNumber: identity.issueNumber,
     protectedPaths: Object.freeze([...identity.protectedPaths].sort()),
-    remoteIdentity: identity.remoteIdentity,
-    repositoryIdentityHash: identity.repositoryIdentityHash,
+    remoteIdentity: identity.remoteIdentity.trim(),
   });
+}
+
+function repositoryIdentityPayload(
+  identity: RepositoryIdentitySeed,
+): Readonly<{ [key: string]: string | number | readonly string[] }> {
+  const normalized = normalizeRepositoryIdentitySeed(identity);
+
+  return Object.freeze({
+    repositorySlug: normalized.repositorySlug,
+    host: normalized.host,
+    normalizedOrigin: normalized.normalizedOrigin,
+    repositoryRealpath: normalized.repositoryRealpath,
+    worktreeRealpath: normalized.worktreeRealpath,
+    mainCloneRealpath: normalized.mainCloneRealpath,
+    gitDir: normalized.gitDir,
+    commonGitDir: normalized.commonGitDir,
+    worktreeRegistrationHash: normalized.worktreeRegistrationHash,
+    branch: normalized.branch,
+    headSha: normalized.headSha,
+    baseSha: normalized.baseSha,
+    worktreeId: normalized.worktreeId,
+    issueNumber: normalized.issueNumber,
+    protectedPaths: normalized.protectedPaths,
+    remoteIdentity: normalized.remoteIdentity,
+  });
+}
+
+export function computeRepositoryIdentityHash(
+  identity: RepositoryIdentitySeed,
+): string {
+  return sha256Bytes(JSON.stringify(repositoryIdentityPayload(identity)));
+}
+
+export function createRepositoryIdentity(
+  identity: RepositoryIdentitySeed,
+): RepositoryIdentity {
+  const normalized = normalizeRepositoryIdentitySeed(identity);
+
+  return Object.freeze({
+    ...normalized,
+    repositoryIdentityHash: computeRepositoryIdentityHash(normalized),
+  });
+}
+
+export function assertRepositoryIdentityIntegrity(
+  identity: RepositoryIdentity,
+): RepositoryIdentity {
+  assertSha256("repository identity hash", identity.repositoryIdentityHash);
+
+  const { repositoryIdentityHash: persistedHash, ...seed } = identity;
+
+  const normalized = normalizeRepositoryIdentitySeed(seed);
+  const expectedHash = computeRepositoryIdentityHash(normalized);
+
+  if (expectedHash !== persistedHash) {
+    fail(
+      "REPOSITORY_IDENTITY_INTEGRITY_FAILED",
+      "Repository identity hash does not reproduce its canonical payload",
+    );
+  }
+
+  return Object.freeze({
+    ...normalized,
+    repositoryIdentityHash: persistedHash,
+  });
+}
+
+function normalizeRepositoryIdentity(
+  identity: RepositoryIdentity,
+): RepositoryIdentity {
+  return assertRepositoryIdentityIntegrity(identity);
 }
 
 function manifestPayload(seed: TrustManifestSeed): Readonly<{
@@ -168,7 +300,7 @@ function manifestPayload(seed: TrustManifestSeed): Readonly<{
   assertSha256("workspace manifest hash", seed.workspaceManifestHash);
 
   const normalizedTools = [...seed.toolIdentities]
-    .map(normalizeToolIdentity)
+    .map(assertToolIdentityIntegrity)
     .sort((left, right) => left.name.localeCompare(right.name));
 
   const names = new Set(normalizedTools.map((tool) => tool.name));

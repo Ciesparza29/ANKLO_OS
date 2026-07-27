@@ -1,11 +1,13 @@
-import { runCodexCommand } from "./trusted-process.ts";
+import {
+  executeCodexReview,
+  type TrustedExecutionContext,
+} from "./trusted-process.ts";
 import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import { isRecord } from "./contracts.ts";
 import { OrchestratorError } from "./errors.ts";
 import { type GitEvidence, type WorktreeManager } from "./worktree.ts";
 
-const CODEX_EXECUTABLE = "codex";
 const DEFAULT_TIMEOUT_MS = 300_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 5 * 1024 * 1024;
 
@@ -148,7 +150,6 @@ export class CodexReadOnlyAdapter {
   readonly #worktreeManager: WorktreeManager;
   readonly #codexHome: string;
   readonly #outputSchemaPath: string;
-  readonly #codexExecutablePath: string;
   readonly #timeoutMs: number;
   readonly #maxOutputBytes: number;
 
@@ -168,7 +169,6 @@ export class CodexReadOnlyAdapter {
       );
     }
     this.#outputSchemaPath = realpathSync(config.outputSchemaPath);
-    this.#codexExecutablePath = config.codexExecutablePath ?? CODEX_EXECUTABLE;
     if (!lstatSync(this.#outputSchemaPath).isFile()) {
       fail("INVALID_CODEX_CONFIG", "Output schema must be a regular file");
     }
@@ -188,6 +188,7 @@ export class CodexReadOnlyAdapter {
   }
 
   async reviewWorktree(
+    context: TrustedExecutionContext,
     worktreePath: string,
     expectedHeadSha: string,
     prompt: string,
@@ -201,6 +202,7 @@ export class CodexReadOnlyAdapter {
       fail("INVALID_CODEX_PROMPT", "Codex prompt is invalid");
     }
     const beforeEvidence = this.#worktreeManager.validateWorktreeAccess(
+      context,
       worktreePath,
       expectedHeadSha,
     );
@@ -213,27 +215,11 @@ export class CodexReadOnlyAdapter {
         "Codex runtime and worktree must be disjoint",
       );
     }
-    const args = Object.freeze([
-      "exec",
-      "--ignore-user-config",
-      "--strict-config",
-      "-c",
-      "mcp_servers={}",
-      "--sandbox",
-      "read-only",
-      "--ephemeral",
-      "--json",
-      "--output-schema",
-      this.#outputSchemaPath,
-      "--cd",
-      beforeEvidence.worktreePath,
-      prompt,
-    ]);
 
-    const rawExecution = await runCodexCommand({
-      binaryPath: this.#codexExecutablePath,
-      vector: args,
-      directory: beforeEvidence.worktreePath,
+    const rawExecution = await executeCodexReview(context, {
+      prompt,
+      targetDirectory: beforeEvidence.worktreePath,
+      schemaPath: this.#outputSchemaPath,
       runtimeDirectory: this.#codexHome,
       timeoutMs: this.#timeoutMs,
       maxOutputBytes: this.#maxOutputBytes,
@@ -249,6 +235,7 @@ export class CodexReadOnlyAdapter {
     });
 
     const afterEvidence = this.#worktreeManager.validateWorktreeAccess(
+      context,
       worktreePath,
       expectedHeadSha,
     );

@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -9,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
@@ -26,6 +27,11 @@ import {
   createWorkPackage,
 } from "../src/work-package.ts";
 import { WorktreeManager } from "../src/worktree.ts";
+import {
+  createNodeToolIdentity,
+  createRepositoryIdentity,
+  createToolIdentity,
+} from "../src/operational-trust.ts";
 
 const projectRoot = realpathSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../.."),
@@ -172,6 +178,57 @@ function setupFullPipeline() {
     runId,
     to: "PLAN_APPROVED",
     reason: "approved",
+    correlationId: runId,
+    now,
+  });
+
+  const tools = ["node", "git", "gh", "codex"].map((name) => {
+    if (name === "node") return createNodeToolIdentity();
+    let binPath = spawnSync("which", [name], {
+      encoding: "utf8",
+    }).stdout.trim();
+    if (!binPath || !existsSync(binPath)) {
+      binPath = join(repo.root, name);
+      writeFileSync(binPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    }
+    return createToolIdentity(name, binPath, "1.0.0");
+  });
+  const repIdentity = createRepositoryIdentity({
+    repositorySlug: "Ciesparza29/ANKLO_OS",
+    host: "github.com",
+    normalizedOrigin: "github.com/Ciesparza29/ANKLO_OS",
+    repositoryRealpath: realpathSync(repo.root),
+    worktreeRealpath: realpathSync(repo.worktree),
+    mainCloneRealpath: realpathSync(repo.main),
+    gitDir: realpathSync(
+      resolve(repo.worktree, git(repo.worktree, ["rev-parse", "--git-dir"])),
+    ),
+    commonGitDir: realpathSync(
+      resolve(
+        repo.worktree,
+        git(repo.worktree, ["rev-parse", "--git-common-dir"]),
+      ),
+    ),
+    worktreeRegistrationHash: "1".repeat(64),
+    branch: "feat/phase165",
+    headSha: repo.head,
+    baseSha: repo.head,
+    worktreeId: "worktree-phase165",
+    issueNumber: 24,
+    protectedPaths: [realpathSync(repo.main)],
+    remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
+  });
+  store.bindRunTrust({
+    runId,
+    trustManifestHash: "1".repeat(64),
+    repositoryIdentityHash: repIdentity.repositoryIdentityHash,
+    repositoryIdentity: repIdentity,
+    toolIdentities: tools,
+    lockfileHash: "4".repeat(64),
+    workspaceManifestHash: "5".repeat(64),
+    analyzerVersion: "1.0.0",
+    remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
+    commonGitDirIdentity: "6".repeat(64),
     correlationId: runId,
     now,
   });

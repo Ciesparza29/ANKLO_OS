@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdtempSync,
   mkdirSync,
   realpathSync,
@@ -6,7 +7,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,6 +17,13 @@ import {
   parseCodexJsonLines,
 } from "../src/codex-adapter.ts";
 import { WorktreeManager } from "../src/worktree.ts";
+import {
+  createNodeToolIdentity,
+  createRepositoryIdentity,
+  createToolIdentity,
+} from "../src/operational-trust.ts";
+import { SqliteStateStore } from "../src/state-store.ts";
+import type { TrustedExecutionContext } from "../src/trusted-process.ts";
 
 const projectRoot = realpathSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../.."),
@@ -82,6 +90,98 @@ function managerFor(repo: ReturnType<typeof createWorktree>): WorktreeManager {
   });
 }
 
+function createTestContext(
+  repoRoot: string,
+  options?: {
+    worktree?: string;
+    main?: string;
+    ghBin?: string;
+    codexBin?: string;
+    headSha?: string;
+  },
+): TrustedExecutionContext {
+  const dbDir = temporaryDirectory("anklo-adapter-db-");
+  const store = SqliteStateStore.open(join(dbDir, "store.db"));
+  const now = new Date("2026-07-27T00:00:00.000Z");
+  const runId = "run-adapter-test";
+  store.createRun({
+    runId,
+    repository: "Ciesparza29/ANKLO_OS",
+    issueNumber: 24,
+    idempotencyKey: "0".repeat(64),
+    baseSha: "2".repeat(40),
+    planHash: "3".repeat(64),
+    sourceSnapshotHash: "4".repeat(64),
+    now,
+  });
+
+  const gitBin = spawnSync("which", ["git"], {
+    encoding: "utf8",
+  }).stdout.trim();
+  const tools = [
+    createNodeToolIdentity(),
+    createToolIdentity("git", gitBin, "1.0.0"),
+  ];
+  if (options?.ghBin) {
+    tools.push(createToolIdentity("gh", options.ghBin, "1.0.0"));
+  }
+  if (options?.codexBin) {
+    tools.push(createToolIdentity("codex", options.codexBin, "1.0.0"));
+  }
+
+  const worktreePath = options?.worktree
+    ? realpathSync(options.worktree)
+    : realpathSync(repoRoot);
+  const mainPath = options?.main
+    ? realpathSync(options.main)
+    : realpathSync(repoRoot);
+
+  let gitDir = realpathSync(repoRoot);
+  let commonGitDir = realpathSync(repoRoot);
+  if (options?.worktree && existsSync(options.worktree)) {
+    const gd = git(options.worktree, ["rev-parse", "--git-dir"]);
+    gitDir = realpathSync(resolve(options.worktree, gd));
+    const cgd = git(options.worktree, ["rev-parse", "--git-common-dir"]);
+    commonGitDir = realpathSync(resolve(options.worktree, cgd));
+  }
+
+  const repIdentity = createRepositoryIdentity({
+    repositorySlug: "Ciesparza29/ANKLO_OS",
+    host: "github.com",
+    normalizedOrigin: "github.com/Ciesparza29/ANKLO_OS",
+    repositoryRealpath: realpathSync(repoRoot),
+    worktreeRealpath: worktreePath,
+    mainCloneRealpath: mainPath,
+    gitDir,
+    commonGitDir,
+    worktreeRegistrationHash: "1".repeat(64),
+    branch: "feat/review",
+    headSha: options?.headSha ?? "2".repeat(40),
+    baseSha: options?.headSha ?? "2".repeat(40),
+    worktreeId: "worktree-adapter",
+    issueNumber: 24,
+    protectedPaths: [mainPath],
+    remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
+  });
+
+  store.bindRunTrust({
+    runId,
+    trustManifestHash: "1".repeat(64),
+    repositoryIdentityHash: repIdentity.repositoryIdentityHash,
+    repositoryIdentity: repIdentity,
+    toolIdentities: tools,
+    lockfileHash: "4".repeat(64),
+    workspaceManifestHash: "5".repeat(64),
+    analyzerVersion: "1.0.0",
+    remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
+    commonGitDirIdentity: "6".repeat(64),
+    correlationId: runId,
+    now,
+  });
+
+  return { runId, stateStore: store };
+}
+
 afterEach(() => {
   while (temporaryDirectories.length > 0) {
     const directory = temporaryDirectories.pop();
@@ -90,14 +190,18 @@ afterEach(() => {
 });
 
 describe("concrete read-only GitHub adapter", () => {
-  function adapter(): GitHubReadOnlyAdapter {
+  function adapter(): {
+    github: GitHubReadOnlyAdapter;
+    context: TrustedExecutionContext;
+  } {
     const root = temporaryDirectory("anklo-gh-test-");
     const bin = join(root, "bin");
     const config = join(root, "gh-config");
     mkdirSync(bin);
     mkdirSync(config);
+    const ghBin = join(bin, "gh");
     executable(
-      join(bin, "gh"),
+      ghBin,
       `#!/bin/sh
 case "$1 $2" in
   "issue view")
@@ -116,33 +220,34 @@ case "$1 $2" in
 esac
 `,
     );
-    return new GitHubReadOnlyAdapter({
+    const github = new GitHubReadOnlyAdapter({
       repository: "Ciesparza29/ANKLO_OS",
       ghConfigDirectory: config,
-      ghExecutablePath: join(bin, "gh"),
     });
+    const context = createTestContext(root, { ghBin });
+    return { github, context };
   }
 
   it("allows only fixed issue, PR and forced-GET API reads", () => {
-    const github = adapter();
-    expect(github.getIssue(24).body).toBe("Exact UTF-8 body");
-    expect(github.computeIssueBodyHash(24)).toMatch(/^[0-9a-f]{64}$/u);
-    expect(github.getPullRequest(25).headSha).toBe("a".repeat(40));
-    expect(github.apiGet({ kind: "issue", number: 24 })).toEqual({
+    const { github, context } = adapter();
+    expect(github.getIssue(context, 24).body).toBe("Exact UTF-8 body");
+    expect(github.computeIssueBodyHash(context, 24)).toMatch(/^[0-9a-f]{64}$/u);
+    expect(github.getPullRequest(context, 25).headSha).toBe("a".repeat(40));
+    expect(github.apiGet(context, { kind: "issue", number: 24 })).toEqual({
       read_only: true,
     });
     expect(
-      github.apiGet({ kind: "check-runs", commitSha: "a".repeat(40) }),
+      github.apiGet(context, { kind: "check-runs", commitSha: "a".repeat(40) }),
     ).toEqual({
       read_only: true,
     });
   });
 
   it("rejects invalid resource identifiers before invoking gh", () => {
-    const github = adapter();
-    expect(() => github.getIssue(0)).toThrow(/positive integer/u);
+    const { github, context } = adapter();
+    expect(() => github.getIssue(context, 0)).toThrow(/positive integer/u);
     expect(() =>
-      github.apiGet({ kind: "check-runs", commitSha: "main" }),
+      github.apiGet(context, { kind: "check-runs", commitSha: "main" }),
     ).toThrow(/invalid/u);
     expect("createComment" in github).toBe(false);
     expect("mergePullRequest" in github).toBe(false);
@@ -171,14 +276,21 @@ printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"
 `,
     );
     const runtime = join(repo.root, "codex-home");
+    const codexBin = join(repo.root, "bin", "codex");
     const adapter = new CodexReadOnlyAdapter(managerFor(repo), {
       runtimeDirectory: runtime,
       outputSchemaPath,
-      codexExecutablePath: join(repo.root, "bin", "codex"),
       timeoutMs: 5_000,
       maxOutputBytes: 64 * 1024,
     });
+    const context = createTestContext(repo.root, {
+      worktree: repo.worktree,
+      main: repo.main,
+      codexBin,
+      headSha: repo.head,
+    });
     const result = await adapter.reviewWorktree(
+      context,
       repo.worktree,
       repo.head,
       "Review this exact worktree",
@@ -196,13 +308,19 @@ touch dirty-by-codex.txt
 printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\\"decision\\":\\"APPROVE\\",\\"summary\\":\\"Unsafe\\",\\"findings\\":[]}"}}'
 `,
     );
+    const codexBin = join(repo.root, "bin", "codex");
     const adapter = new CodexReadOnlyAdapter(managerFor(repo), {
       runtimeDirectory: join(repo.root, "codex-home"),
       outputSchemaPath,
-      codexExecutablePath: join(repo.root, "bin", "codex"),
+    });
+    const context = createTestContext(repo.root, {
+      worktree: repo.worktree,
+      main: repo.main,
+      codexBin,
+      headSha: repo.head,
     });
     await expect(
-      adapter.reviewWorktree(repo.worktree, repo.head, "review"),
+      adapter.reviewWorktree(context, repo.worktree, repo.head, "review"),
     ).rejects.toThrow(/must be clean/u);
   });
 

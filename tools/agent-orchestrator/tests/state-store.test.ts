@@ -1,9 +1,13 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ObservedApproval } from "../src/approvals.ts";
+import {
+  createRepositoryIdentity,
+  type RepositoryIdentity,
+} from "../src/operational-trust.ts";
 import { SqliteStateStore } from "../src/state-store.ts";
 
 const tempDirs: string[] = [];
@@ -17,6 +21,119 @@ function createDatabasePath(name = "orchestrator.sqlite"): string {
 function createStore(): { store: SqliteStateStore; path: string } {
   const path = createDatabasePath();
   return { store: SqliteStateStore.open(path), path };
+}
+
+type HistoricalSchemaVersion = 2 | 3 | 4 | 5 | 6;
+
+function repositoryIdentityForTest(): RepositoryIdentity {
+  return createRepositoryIdentity({
+    repositorySlug: "Ciesparza29/ANKLO_OS",
+    host: "github.com",
+    normalizedOrigin: "github.com/Ciesparza29/ANKLO_OS",
+    repositoryRealpath: "/tmp/repository",
+    worktreeRealpath: "/tmp/repository/worktree",
+    mainCloneRealpath: "/tmp/repository/main",
+    gitDir: "/tmp/repository/.git/worktrees/worktree",
+    commonGitDir: "/tmp/repository/.git",
+    worktreeRegistrationHash: "1".repeat(64),
+    branch: "fix/24-orchestrator-trust-r5",
+    headSha: "2".repeat(40),
+    baseSha: "3".repeat(40),
+    worktreeId: "worktree-r5",
+    issueNumber: 24,
+    protectedPaths: ["/tmp/repository/main", "/tmp/repository/rejected"],
+    remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
+  });
+}
+
+const V7_RUN_COLUMNS = ["repository_identity_json"] as const;
+
+const TRUST_RUN_COLUMNS = [
+  "trust_manifest_hash",
+  "repository_identity_hash",
+  "tool_identities_json",
+  "lockfile_hash",
+  "workspace_manifest_hash",
+  "analyzer_version",
+  "remote_identity",
+  "common_git_dir_identity",
+] as const;
+
+const PACKAGE_RUN_COLUMNS = [
+  "package_relative_path",
+  "package_byte_length",
+  "package_schema_version",
+] as const;
+
+const V3_AUDIT_COLUMNS = [
+  "event_id",
+  "schema_version",
+  "actor_type",
+  "actor_id",
+  "result",
+  "evidence_ref",
+] as const;
+
+function dropColumns(
+  database: DatabaseSync,
+  table: string,
+  columns: readonly string[],
+): void {
+  for (const column of columns) {
+    database.exec("ALTER TABLE " + table + " DROP COLUMN " + column + ";");
+  }
+}
+
+function createHistoricalDatabase(version: HistoricalSchemaVersion): {
+  path: string;
+  runId: string;
+} {
+  const path = createDatabasePath("schema-v" + String(version) + ".sqlite");
+  const runId = "historical-v" + String(version);
+
+  const seed = SqliteStateStore.open(path);
+  createRun(seed, runId);
+  seed.close();
+
+  const raw = new DatabaseSync(path);
+
+  try {
+    raw.exec("PRAGMA foreign_keys = OFF;");
+    raw.exec("PRAGMA journal_mode = DELETE;");
+
+    dropColumns(raw, "runs", V7_RUN_COLUMNS);
+
+    if (version < 6) {
+      dropColumns(raw, "runs", TRUST_RUN_COLUMNS);
+    }
+
+    if (version < 5) {
+      dropColumns(raw, "runs", ["plan_approval_binding_json"]);
+    }
+
+    if (version < 4) {
+      dropColumns(raw, "runs", PACKAGE_RUN_COLUMNS);
+    }
+
+    if (version < 3) {
+      raw.exec("DROP INDEX audit_events_event_id;");
+      dropColumns(raw, "runs", ["revalidation_epoch"]);
+      dropColumns(raw, "approvals", ["revalidation_epoch"]);
+      dropColumns(raw, "audit_events", V3_AUDIT_COLUMNS);
+    }
+
+    raw.exec(
+      "UPDATE schema_meta SET version = " +
+        String(version) +
+        ", applied_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') " +
+        "WHERE singleton_id = 1;",
+    );
+    raw.exec("PRAGMA user_version = " + String(version) + ";");
+  } finally {
+    raw.close();
+  }
+
+  return { path, runId };
 }
 
 function createRun(store: SqliteStateStore, runId: string, issueNumber = 24) {
@@ -124,7 +241,7 @@ describe("SQLite state store", () => {
   it("verifies schema version, WAL, foreign keys, timeout and integrity", () => {
     const { store } = createStore();
     expect(store.runtimeDiagnostics()).toEqual({
-      schemaVersion: 6,
+      schemaVersion: 7,
       journalMode: "wal",
       foreignKeys: true,
       busyTimeoutMs: 5000,
@@ -506,6 +623,187 @@ describe("SQLite state store", () => {
     store.close();
   });
 
+  it("keeps the 4 to 5 migration explicitly bound to version 5", () => {
+    const stateStoreSource = readFileSync(
+      join(process.cwd(), "tools/agent-orchestrator/src/state-store.ts"),
+      "utf8",
+    );
+
+    const start = stateStoreSource.indexOf("  #migrateV4toV5(): void {");
+    const end = stateStoreSource.indexOf(
+      "\n  #migrateV5toV6(createBackup: boolean): void {",
+      start,
+    );
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+
+    const migration = stateStoreSource.slice(start, end);
+
+    expect(migration).toContain("SET version = 5");
+    expect(migration).toContain("PRAGMA user_version = 5;");
+    expect(migration).not.toContain("STATE_SCHEMA_VERSION");
+  });
+
+  it("keeps the 5 to 6 migration explicitly bound to version 6", () => {
+    const stateStoreSource = readFileSync(
+      join(process.cwd(), "tools/agent-orchestrator/src/state-store.ts"),
+      "utf8",
+    );
+
+    const start = stateStoreSource.indexOf(
+      "  #migrateV5toV6(createBackup: boolean): void {",
+    );
+    const end = stateStoreSource.indexOf(
+      "\n  #migrateV6toV7(createBackup: boolean): void {",
+      start,
+    );
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+
+    const migration = stateStoreSource.slice(start, end);
+
+    expect(migration).toContain("SET version = 6");
+    expect(migration).toContain("PRAGMA user_version = 6;");
+    expect(migration).not.toContain("STATE_SCHEMA_VERSION");
+  });
+
+  it("keeps the 6 to 7 migration explicitly bound to version 7", () => {
+    const stateStoreSource = readFileSync(
+      join(process.cwd(), "tools/agent-orchestrator/src/state-store.ts"),
+      "utf8",
+    );
+
+    const start = stateStoreSource.indexOf(
+      "  #migrateV6toV7(createBackup: boolean): void {",
+    );
+    const end = stateStoreSource.indexOf("\n  #backupDatabase(", start);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+
+    const migration = stateStoreSource.slice(start, end);
+
+    expect(migration).toContain("SET version = 7");
+    expect(migration).toContain("PRAGMA user_version = 7;");
+    expect(migration).not.toContain("STATE_SCHEMA_VERSION");
+  });
+
+  it.each([2, 3, 4, 5, 6] as const)(
+    "migrates schema %i to schema 7 while preserving historical runs",
+    (version) => {
+      const { path, runId } = createHistoricalDatabase(version);
+      const store = SqliteStateStore.open(path);
+
+      try {
+        expect(store.runtimeDiagnostics()).toEqual({
+          schemaVersion: 7,
+          journalMode: "wal",
+          foreignKeys: true,
+          busyTimeoutMs: 5000,
+          integrityCheck: "ok",
+        });
+
+        const historicalRun = store.getRun(runId);
+
+        expect(historicalRun).toMatchObject({
+          runId,
+          repository: "Ciesparza29/ANKLO_OS",
+          issueNumber: 24,
+          baseSha: "7".repeat(40),
+          planHash: "1".repeat(64),
+          sourceSnapshotHash: "2".repeat(64),
+          revalidationEpoch: 1,
+          packageReference: null,
+          planApprovalBinding: null,
+          trustManifestHash: null,
+          repositoryIdentityHash: null,
+          repositoryIdentity: null,
+          toolIdentities: null,
+          lockfileHash: null,
+          workspaceManifestHash: null,
+          analyzerVersion: null,
+          remoteIdentity: null,
+          commonGitDirIdentity: null,
+        });
+
+        const repositoryIdentity = repositoryIdentityForTest();
+
+        const bound = store.bindRunTrust({
+          runId,
+          trustManifestHash: "1".repeat(64),
+          repositoryIdentityHash: repositoryIdentity.repositoryIdentityHash,
+          repositoryIdentity,
+          toolIdentities: [
+            {
+              name: "node",
+              resolvedPath: "/usr/bin/node",
+              realpath: "/usr/bin/node",
+              sha256: "3".repeat(64),
+              version: "24.18.0",
+            },
+          ],
+          lockfileHash: "4".repeat(64),
+          workspaceManifestHash: "5".repeat(64),
+          analyzerVersion: "1.0.0",
+          remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
+          commonGitDirIdentity: "6".repeat(64),
+          correlationId: runId,
+          now: new Date("2026-07-27T09:00:00.000Z"),
+        });
+
+        expect(bound.trustManifestHash).toBe("1".repeat(64));
+        expect(bound.repositoryIdentityHash).toBe(
+          repositoryIdentity.repositoryIdentityHash,
+        );
+        expect(bound.repositoryIdentity).toEqual(repositoryIdentity);
+        expect(bound.toolIdentities).toHaveLength(1);
+      } finally {
+        store.close();
+      }
+
+      const migrated = new DatabaseSync(path);
+
+      try {
+        const userVersion = migrated.prepare("PRAGMA user_version").get();
+
+        const schemaMeta = migrated
+          .prepare(
+            "SELECT version, migration_state " +
+              "FROM schema_meta WHERE singleton_id = 1",
+          )
+          .get();
+
+        const integrity = migrated.prepare("PRAGMA integrity_check").get();
+
+        const columns = migrated
+          .prepare("PRAGMA table_info(runs)")
+          .all()
+          .map((row) => String(row.name));
+
+        expect(Number(userVersion?.user_version)).toBe(7);
+        expect(Number(schemaMeta?.version)).toBe(7);
+        expect(String(schemaMeta?.migration_state)).toBe("COMPLETE");
+        expect(String(integrity?.integrity_check)).toBe("ok");
+
+        expect(columns).toEqual(
+          expect.arrayContaining([
+            "revalidation_epoch",
+            "package_relative_path",
+            "package_byte_length",
+            "package_schema_version",
+            "plan_approval_binding_json",
+            ...TRUST_RUN_COLUMNS,
+            ...V7_RUN_COLUMNS,
+          ]),
+        );
+      } finally {
+        migrated.close();
+      }
+    },
+  );
+
   it("rejects unknown schemas and writes a persistent quarantine marker", () => {
     const path = createDatabasePath("unknown.sqlite");
     const raw = new DatabaseSync(path);
@@ -522,10 +820,13 @@ describe("SQLite state store", () => {
 
     createRun(store, "run-trust");
 
+    const repositoryIdentity = repositoryIdentityForTest();
+
     const input = {
       runId: "run-trust",
       trustManifestHash: "1".repeat(64),
-      repositoryIdentityHash: "2".repeat(64),
+      repositoryIdentityHash: repositoryIdentity.repositoryIdentityHash,
+      repositoryIdentity,
       toolIdentities: [
         {
           name: "node",
@@ -548,6 +849,7 @@ describe("SQLite state store", () => {
 
     expect(first.trustManifestHash).toBe(input.trustManifestHash);
     expect(first.repositoryIdentityHash).toBe(input.repositoryIdentityHash);
+    expect(first.repositoryIdentity).toEqual(input.repositoryIdentity);
     expect(first.toolIdentities).toEqual(input.toolIdentities);
     expect(first.lockfileHash).toBe(input.lockfileHash);
     expect(first.workspaceManifestHash).toBe(input.workspaceManifestHash);

@@ -1,6 +1,9 @@
-import { runVerificationCommandAsync } from "./trusted-process.ts";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import {
+  executeNodeVerification,
+  type TrustedExecutionContext,
+} from "./trusted-process.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { OrchestratorError } from "./errors.ts";
 import { type GitEvidence, type WorktreeManager } from "./worktree.ts";
 
@@ -155,26 +158,15 @@ function readToolVersions(
 }
 
 async function executeCommand(
+  context: TrustedExecutionContext,
   command: VerificationCommand,
   worktreePath: string,
+  profile: VerificationProfileName,
 ): Promise<CommandExecutionResult> {
-  const executable = process.execPath;
-  const scriptPath = resolve(worktreePath, command.relativeScript);
-  const realScript = realpathSync(scriptPath);
-
-  if (!lstatSync(realScript).isFile()) {
-    fail(
-      "VERIFICATION_PREFLIGHT_FAILED",
-      `Verification script is not a regular file: ${command.relativeScript}`,
-    );
-  }
-
-  const args = Object.freeze([realScript, ...command.args]);
-
-  const execution = await runVerificationCommandAsync({
-    binaryPath: executable,
-    vector: args,
-    directory: worktreePath,
+  const execution = await executeNodeVerification(context, {
+    profile,
+    tool: command.tool,
+    targetDirectory: worktreePath,
     timeoutMs: command.timeoutMs,
     maxOutputBytes: command.maxOutputBytes,
   });
@@ -189,7 +181,7 @@ async function executeCommand(
   return Object.freeze({
     tool: command.tool,
     executable: execution.resolvedBinary,
-    args,
+    args: execution.vector,
     exitCode: execution.exitCode,
     signal: execution.signal,
     stdout: cleanStdout,
@@ -222,6 +214,7 @@ export class VerificationRunner {
   }
 
   async runProfile(
+    context: TrustedExecutionContext,
     profileName: VerificationProfileName,
     worktreePath: string,
     expectedHeadSha: string,
@@ -235,17 +228,24 @@ export class VerificationRunner {
       );
     }
     const beforeEvidence = this.#worktreeManager.validateWorktreeAccess(
+      context,
       worktreePath,
       expectedHeadSha,
     );
     const profile = PROFILES[profileName];
     const results: CommandExecutionResult[] = [];
     for (const command of profile.commands) {
-      const result = await executeCommand(command, beforeEvidence.worktreePath);
+      const result = await executeCommand(
+        context,
+        command,
+        beforeEvidence.worktreePath,
+        profileName,
+      );
       results.push(result);
       if (!result.success) break;
     }
     const afterEvidence = this.#worktreeManager.validateWorktreeAccess(
+      context,
       worktreePath,
       expectedHeadSha,
     );
