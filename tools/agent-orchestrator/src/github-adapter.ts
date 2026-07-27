@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { runGhCommand } from "./trusted-process.ts";
 import { existsSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { GIT_SHA_PATTERN, isRecord } from "./contracts.ts";
@@ -28,6 +28,7 @@ export interface GitHubPullRequest {
 export interface GitHubReadOnlyConfig {
   readonly repository: string;
   readonly ghConfigDirectory: string;
+  readonly ghExecutablePath?: string;
 }
 
 export type GitHubApiResource =
@@ -72,6 +73,7 @@ function stringField(record: Record<string, unknown>, field: string): string {
 export class GitHubReadOnlyAdapter {
   readonly #repository: string;
   readonly #ghConfigDirectory: string;
+  readonly #ghExecutablePath: string;
 
   constructor(config: GitHubReadOnlyConfig) {
     if (!REPOSITORY_PATTERN.test(config.repository)) {
@@ -88,31 +90,17 @@ export class GitHubReadOnlyAdapter {
     }
     this.#repository = config.repository;
     this.#ghConfigDirectory = realpathSync(config.ghConfigDirectory);
-  }
-
-  #environment(): NodeJS.ProcessEnv {
-    return {
-      PATH: process.env.PATH ?? "/usr/bin:/bin",
-      HOME: "/nonexistent",
-      XDG_CONFIG_HOME: "/nonexistent",
-      LANG: "C",
-      LC_ALL: "C",
-      GH_CONFIG_DIR: this.#ghConfigDirectory,
-      GH_HOST,
-      GH_PROMPT_DISABLED: "1",
-      NO_COLOR: "1",
-    };
+    this.#ghExecutablePath = config.ghExecutablePath ?? GH_EXECUTABLE;
   }
 
   #run(args: readonly string[]): string {
-    const result = spawnSync(GH_EXECUTABLE, args, {
-      cwd: this.#ghConfigDirectory,
-      encoding: "utf8",
-      env: this.#environment(),
-      timeout: GH_TIMEOUT_MS,
-      maxBuffer: GH_MAX_OUTPUT_BYTES,
-      shell: false,
-      windowsHide: true,
+    const result = runGhCommand({
+      binaryPath: this.#ghExecutablePath,
+      vector: args,
+      directory: this.#ghConfigDirectory,
+      configDirectory: this.#ghConfigDirectory,
+      timeoutMs: GH_TIMEOUT_MS,
+      maxOutputBytes: GH_MAX_OUTPUT_BYTES,
     });
     if (result.error) {
       fail(

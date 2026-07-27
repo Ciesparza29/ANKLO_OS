@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { runGitCommand } from "./trusted-process.ts";
 import { existsSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { GIT_SHA_PATTERN } from "./contracts.ts";
@@ -61,19 +61,6 @@ function isWithin(parent: string, child: string): boolean {
     rel === "" ||
     (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel))
   );
-}
-
-function safeGitEnvironment(): NodeJS.ProcessEnv {
-  return {
-    PATH: process.env.PATH ?? "/usr/bin:/bin",
-    HOME: "/nonexistent",
-    XDG_CONFIG_HOME: "/nonexistent",
-    LANG: "C",
-    LC_ALL: "C",
-    GIT_CONFIG_GLOBAL: "/dev/null",
-    GIT_CONFIG_NOSYSTEM: "1",
-    GIT_TERMINAL_PROMPT: "0",
-  };
 }
 
 function normalizeRepositoryUrl(url: string): string {
@@ -138,19 +125,13 @@ export class WorktreeManager {
   }
 
   #runGit(cwd: string, args: readonly string[]): string {
-    const result = spawnSync(
-      GIT_EXECUTABLE,
-      ["-c", "core.hooksPath=/dev/null", ...args],
-      {
-        cwd,
-        encoding: "utf8",
-        env: safeGitEnvironment(),
-        timeout: GIT_TIMEOUT_MS,
-        maxBuffer: GIT_MAX_OUTPUT_BYTES,
-        shell: false,
-        windowsHide: true,
-      },
-    );
+    const result = runGitCommand({
+      binaryPath: GIT_EXECUTABLE,
+      vector: ["-c", "core.hooksPath=/dev/null", ...args],
+      directory: cwd,
+      timeoutMs: GIT_TIMEOUT_MS,
+      maxOutputBytes: GIT_MAX_OUTPUT_BYTES,
+    });
     if (result.error) {
       fail(
         "GIT_COMMAND_FAILED",
@@ -460,9 +441,9 @@ export class WorktreeManager {
         "Target path or branch already has a registered worktree",
       );
     }
-    const branchExists = spawnSync(
-      GIT_EXECUTABLE,
-      [
+    const branchExists = runGitCommand({
+      binaryPath: GIT_EXECUTABLE,
+      vector: [
         "-c",
         "core.hooksPath=/dev/null",
         "show-ref",
@@ -470,16 +451,10 @@ export class WorktreeManager {
         "--quiet",
         `refs/heads/${input.targetBranch}`,
       ],
-      {
-        cwd: source,
-        encoding: "utf8",
-        env: safeGitEnvironment(),
-        timeout: GIT_TIMEOUT_MS,
-        maxBuffer: GIT_MAX_OUTPUT_BYTES,
-        shell: false,
-        windowsHide: true,
-      },
-    );
+      directory: source,
+      timeoutMs: GIT_TIMEOUT_MS,
+      maxOutputBytes: GIT_MAX_OUTPUT_BYTES,
+    });
     if (branchExists.error) {
       fail(
         "GIT_COMMAND_FAILED",

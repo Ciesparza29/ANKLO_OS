@@ -10,10 +10,7 @@ const sourceFiles = readdirSync(sourceDirectory)
   .sort();
 
 const childProcessPolicy: Readonly<Record<string, readonly string[]>> = {
-  "worktree.ts": ["spawnSync"],
-  "verification-runner.ts": ["spawn"],
-  "github-adapter.ts": ["spawnSync"],
-  "codex-adapter.ts": ["spawn"],
+  "trusted-process.ts": ["spawn", "spawnSync"],
 };
 
 function sourceFile(file: string): ts.SourceFile {

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { runCodexCommand } from "./trusted-process.ts";
 import { existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import { isRecord } from "./contracts.ts";
@@ -22,6 +22,7 @@ export interface CodexReviewResult {
 export interface CodexReadOnlyConfig {
   readonly runtimeDirectory: string;
   readonly outputSchemaPath: string;
+  readonly codexExecutablePath?: string;
   readonly timeoutMs?: number;
   readonly maxOutputBytes?: number;
 }
@@ -46,31 +47,12 @@ function isWithin(parent: string, child: string): boolean {
 }
 
 function sanitizeDiagnostic(value: string): string {
-  let sanitized = value
+  const sanitized = value
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/giu, "Bearer [REDACTED]")
     .replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b/gu, "[REDACTED]")
     .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/gu, "[REDACTED]")
     .replace(/\bsk-[A-Za-z0-9_-]{20,}\b/gu, "[REDACTED]");
-  for (const [name, secret] of Object.entries(process.env)) {
-    if (
-      secret &&
-      secret.length >= 8 &&
-      /(token|secret|password|api[_-]?key|credential)/iu.test(name)
-    ) {
-      sanitized = sanitized.split(secret).join("[REDACTED]");
-    }
-  }
   return sanitized;
-}
-
-function terminateProcessTree(pid: number | undefined): void {
-  if (!pid) return;
-  try {
-    if (process.platform === "win32") process.kill(pid, "SIGKILL");
-    else process.kill(-pid, "SIGKILL");
-  } catch {
-    // The process may already have exited.
-  }
 }
 
 function exactKeys(
@@ -166,6 +148,7 @@ export class CodexReadOnlyAdapter {
   readonly #worktreeManager: WorktreeManager;
   readonly #codexHome: string;
   readonly #outputSchemaPath: string;
+  readonly #codexExecutablePath: string;
   readonly #timeoutMs: number;
   readonly #maxOutputBytes: number;
 
@@ -185,6 +168,7 @@ export class CodexReadOnlyAdapter {
       );
     }
     this.#outputSchemaPath = realpathSync(config.outputSchemaPath);
+    this.#codexExecutablePath = config.codexExecutablePath ?? CODEX_EXECUTABLE;
     if (!lstatSync(this.#outputSchemaPath).isFile()) {
       fail("INVALID_CODEX_CONFIG", "Output schema must be a regular file");
     }
@@ -201,20 +185,6 @@ export class CodexReadOnlyAdapter {
       fail("INVALID_CODEX_CONFIG", "Codex resource limits are invalid");
     }
     this.#worktreeManager = worktreeManager;
-  }
-
-  #environment(): NodeJS.ProcessEnv {
-    return {
-      PATH: process.env.PATH ?? "/usr/bin:/bin",
-      HOME: "/nonexistent",
-      XDG_CONFIG_HOME: "/nonexistent",
-      CODEX_HOME: this.#codexHome,
-      TMPDIR: "/tmp",
-      LANG: "C",
-      LC_ALL: "C",
-      NO_COLOR: "1",
-      RUST_BACKTRACE: "0",
-    };
   }
 
   async reviewWorktree(
@@ -260,60 +230,22 @@ export class CodexReadOnlyAdapter {
       prompt,
     ]);
 
-    const execution = await new Promise<{
-      exitCode: number | null;
-      stdout: string;
-      stderr: string;
-      timedOut: boolean;
-      outputLimitExceeded: boolean;
-      spawnError?: Error;
-    }>((resolveExecution) => {
-      const child = spawn(CODEX_EXECUTABLE, args, {
-        cwd: beforeEvidence.worktreePath,
-        env: this.#environment(),
-        shell: false,
-        detached: process.platform !== "win32",
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
-      });
-      let stdout = "";
-      let stderr = "";
-      let bytes = 0;
-      let timedOut = false;
-      let outputLimitExceeded = false;
-      let spawnError: Error | undefined;
-      const append = (channel: "stdout" | "stderr", chunk: Buffer): void => {
-        bytes += chunk.byteLength;
-        if (bytes > this.#maxOutputBytes) {
-          outputLimitExceeded = true;
-          terminateProcessTree(child.pid);
-          return;
-        }
-        if (channel === "stdout") stdout += chunk.toString("utf8");
-        else stderr += chunk.toString("utf8");
-      };
-      child.stdout.on("data", (chunk: Buffer) => append("stdout", chunk));
-      child.stderr.on("data", (chunk: Buffer) => append("stderr", chunk));
-      child.once("error", (error) => {
-        spawnError = error;
-      });
-      const timeout = setTimeout(() => {
-        timedOut = true;
-        terminateProcessTree(child.pid);
-      }, this.#timeoutMs);
-      child.once("close", (exitCode) => {
-        clearTimeout(timeout);
-        resolveExecution({
-          exitCode,
-          stdout,
-          stderr: sanitizeDiagnostic(
-            spawnError ? `${stderr}\n${spawnError.message}` : stderr,
-          ),
-          timedOut,
-          outputLimitExceeded,
-          ...(spawnError ? { spawnError } : {}),
-        });
-      });
+    const rawExecution = await runCodexCommand({
+      binaryPath: this.#codexExecutablePath,
+      vector: args,
+      directory: beforeEvidence.worktreePath,
+      runtimeDirectory: this.#codexHome,
+      timeoutMs: this.#timeoutMs,
+      maxOutputBytes: this.#maxOutputBytes,
+    });
+
+    const execution = Object.freeze({
+      ...rawExecution,
+      stderr: sanitizeDiagnostic(
+        rawExecution.spawnError
+          ? `${rawExecution.stderr}\n${rawExecution.spawnError.message}`
+          : rawExecution.stderr,
+      ),
     });
 
     const afterEvidence = this.#worktreeManager.validateWorktreeAccess(

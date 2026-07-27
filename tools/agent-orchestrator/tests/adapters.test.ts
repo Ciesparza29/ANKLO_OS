@@ -25,7 +25,6 @@ const outputSchemaPath = join(
   "tools/agent-orchestrator/schemas/codex-review-result.schema.json",
 );
 const temporaryDirectories: string[] = [];
-const originalPath = process.env.PATH;
 
 function temporaryDirectory(prefix: string): string {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -84,7 +83,6 @@ function managerFor(repo: ReturnType<typeof createWorktree>): WorktreeManager {
 }
 
 afterEach(() => {
-  process.env.PATH = originalPath;
   while (temporaryDirectories.length > 0) {
     const directory = temporaryDirectories.pop();
     if (directory) rmSync(directory, { recursive: true, force: true });
@@ -118,10 +116,10 @@ case "$1 $2" in
 esac
 `,
     );
-    process.env.PATH = `${bin}:${originalPath ?? ""}`;
     return new GitHubReadOnlyAdapter({
       repository: "Ciesparza29/ANKLO_OS",
       ghConfigDirectory: config,
+      ghExecutablePath: join(bin, "gh"),
     });
   }
 
@@ -156,7 +154,6 @@ describe("Codex 0.144.6 read-only adapter", () => {
     const bin = join(root, "bin");
     mkdirSync(bin);
     executable(join(bin, "codex"), body);
-    process.env.PATH = `${bin}:${originalPath ?? ""}`;
   }
 
   it("uses isolated config, empty MCP configuration and parses JSONL", async () => {
@@ -177,6 +174,7 @@ printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"
     const adapter = new CodexReadOnlyAdapter(managerFor(repo), {
       runtimeDirectory: runtime,
       outputSchemaPath,
+      codexExecutablePath: join(repo.root, "bin", "codex"),
       timeoutMs: 5_000,
       maxOutputBytes: 64 * 1024,
     });
@@ -201,6 +199,7 @@ printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"
     const adapter = new CodexReadOnlyAdapter(managerFor(repo), {
       runtimeDirectory: join(repo.root, "codex-home"),
       outputSchemaPath,
+      codexExecutablePath: join(repo.root, "bin", "codex"),
     });
     await expect(
       adapter.reviewWorktree(repo.worktree, repo.head, "review"),
