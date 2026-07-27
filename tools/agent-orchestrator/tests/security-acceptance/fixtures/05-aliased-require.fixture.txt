@@ -1,0 +1,4 @@
+const loadModule = require;
+const childProcess = loadModule("node:child_process");
+
+childProcess.spawn("echo", ["blocked"]);

@@ -1,0 +1,5 @@
+import * as childProcess from "node:child_process";
+
+const executeProcess = Reflect.get(childProcess, "spawn");
+
+executeProcess("echo", ["blocked"]);

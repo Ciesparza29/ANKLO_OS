@@ -1,0 +1,102 @@
+[
+  {
+    "id": "static-import-alias",
+    "file": "01-static-import-alias.fixture.txt",
+    "capability": "static_import_alias"
+  },
+  {
+    "id": "namespace-import",
+    "file": "02-namespace-import.fixture.txt",
+    "capability": "namespace_import"
+  },
+  {
+    "id": "computed-access",
+    "file": "03-computed-access.fixture.txt",
+    "capability": "computed_access"
+  },
+  {
+    "id": "destructured-require",
+    "file": "04-destructured-require.fixture.txt",
+    "capability": "destructured_require"
+  },
+  {
+    "id": "aliased-require",
+    "file": "05-aliased-require.fixture.txt",
+    "capability": "aliased_require"
+  },
+  {
+    "id": "dynamic-require",
+    "file": "06-dynamic-require.fixture.txt",
+    "capability": "dynamic_require"
+  },
+  {
+    "id": "dynamic-import",
+    "file": "07-dynamic-import.fixture.txt",
+    "capability": "dynamic_import"
+  },
+  {
+    "id": "create-require",
+    "file": "08-create-require.fixture.txt",
+    "capability": "create_require"
+  },
+  {
+    "id": "get-builtin-module",
+    "file": "09-get-builtin-module.fixture.txt",
+    "capability": "get_builtin_module"
+  },
+  {
+    "id": "wrapper-function",
+    "file": "10-wrapper-function.fixture.txt",
+    "capability": "wrapper_function"
+  },
+  {
+    "id": "function-reference-assignment",
+    "file": "11-function-reference-assignment.fixture.txt",
+    "capability": "function_reference_assignment"
+  },
+  {
+    "id": "call",
+    "file": "12-call.fixture.txt",
+    "capability": "call"
+  },
+  {
+    "id": "apply",
+    "file": "13-apply.fixture.txt",
+    "capability": "apply"
+  },
+  {
+    "id": "bind",
+    "file": "14-bind.fixture.txt",
+    "capability": "bind"
+  },
+  {
+    "id": "reflect-get",
+    "file": "15-reflect-get.fixture.txt",
+    "capability": "reflect_get"
+  },
+  {
+    "id": "resolvable-template-literal",
+    "file": "16-resolvable-template-literal.fixture.txt",
+    "capability": "resolvable_template_literal"
+  },
+  {
+    "id": "resolvable-concatenation",
+    "file": "17-resolvable-concatenation.fixture.txt",
+    "capability": "resolvable_concatenation"
+  },
+  {
+    "id": "re-export",
+    "file": "18-re-export.fixture.txt",
+    "capability": "re_export"
+  },
+  {
+    "id": "optional-chaining",
+    "file": "19-optional-chaining.fixture.txt",
+    "capability": "optional_chaining"
+  },
+  {
+    "id": "unresolved-suspicious-construction",
+    "file": "20-unresolved-suspicious-construction.fixture.txt",
+    "capability": "unresolved_suspicious_construction"
+  }
+]

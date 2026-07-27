@@ -1,0 +1,3 @@
+const childProcess = process.getBuiltinModule("node:child_process");
+
+childProcess?.spawn("echo", ["blocked"]);

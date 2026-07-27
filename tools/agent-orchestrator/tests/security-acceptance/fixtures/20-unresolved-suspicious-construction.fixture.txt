@@ -1,0 +1,6 @@
+declare function resolveModuleName(): string;
+
+const moduleName = resolveModuleName();
+const childProcess = require(moduleName);
+
+childProcess.spawn("echo", ["blocked"]);
