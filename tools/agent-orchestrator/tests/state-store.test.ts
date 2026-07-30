@@ -9,6 +9,7 @@ import {
   type RepositoryIdentity,
 } from "../src/operational-trust.ts";
 import { SqliteStateStore } from "../src/state-store.ts";
+import { createTrustManifest } from "../src/operational-trust.ts";
 
 const tempDirs: string[] = [];
 
@@ -23,7 +24,7 @@ function createStore(): { store: SqliteStateStore; path: string } {
   return { store: SqliteStateStore.open(path), path };
 }
 
-type HistoricalSchemaVersion = 2 | 3 | 4 | 5 | 6;
+type HistoricalSchemaVersion = 2 | 3 | 4 | 5 | 6 | 7;
 
 function repositoryIdentityForTest(): RepositoryIdentity {
   return createRepositoryIdentity({
@@ -47,6 +48,10 @@ function repositoryIdentityForTest(): RepositoryIdentity {
 }
 
 const V7_RUN_COLUMNS = ["repository_identity_json"] as const;
+const V8_RUN_COLUMNS = [
+  "package_manifest_hash",
+  "trust_manifest_json",
+] as const;
 
 const TRUST_RUN_COLUMNS = [
   "trust_manifest_hash",
@@ -101,7 +106,10 @@ function createHistoricalDatabase(version: HistoricalSchemaVersion): {
     raw.exec("PRAGMA foreign_keys = OFF;");
     raw.exec("PRAGMA journal_mode = DELETE;");
 
-    dropColumns(raw, "runs", V7_RUN_COLUMNS);
+    dropColumns(raw, "runs", V8_RUN_COLUMNS);
+    if (version < 7) {
+      dropColumns(raw, "runs", V7_RUN_COLUMNS);
+    }
 
     if (version < 6) {
       dropColumns(raw, "runs", TRUST_RUN_COLUMNS);
@@ -211,7 +219,8 @@ function bindTarget(store: SqliteStateStore, runId: string): void {
     targetBranch: "feat/24-agent-orchestrator",
     targetHeadSha: "7".repeat(40),
     worktreeId: "worktree-24",
-    authorizedFilesHash: "3".repeat(64),
+    authorizedFilesHash:
+      "ee6fb0e015284d83a91e8ec5213f43a157f8a392b58555301682892ba928c04a",
     packageHash: "4".repeat(64),
     planApprovalBinding: {
       approvalEventId: "evt_1",
@@ -241,7 +250,7 @@ describe("SQLite state store", () => {
   it("verifies schema version, WAL, foreign keys, timeout and integrity", () => {
     const { store } = createStore();
     expect(store.runtimeDiagnostics()).toEqual({
-      schemaVersion: 7,
+      schemaVersion: 8,
       journalMode: "wal",
       foreignKeys: true,
       busyTimeoutMs: 5000,
@@ -401,7 +410,8 @@ describe("SQLite state store", () => {
       targetBranch: "feat/24-bind",
       targetHeadSha: "7".repeat(40),
       worktreeId: "worktree-bind",
-      authorizedFilesHash: "3".repeat(64),
+      authorizedFilesHash:
+        "ee6fb0e015284d83a91e8ec5213f43a157f8a392b58555301682892ba928c04a",
       packageHash: "4".repeat(64),
       planApprovalBinding: binding,
       correlationId: "run-binding",
@@ -542,7 +552,8 @@ describe("SQLite state store", () => {
       targetBranch: "feat/25-other",
       targetHeadSha: "7".repeat(40),
       worktreeId: "worktree-24",
-      authorizedFilesHash: "3".repeat(64),
+      authorizedFilesHash:
+        "ee6fb0e015284d83a91e8ec5213f43a157f8a392b58555301682892ba928c04a",
       packageHash: "4".repeat(64),
       planApprovalBinding: {
         approvalEventId: "evt_1",
@@ -690,15 +701,15 @@ describe("SQLite state store", () => {
     expect(migration).not.toContain("STATE_SCHEMA_VERSION");
   });
 
-  it.each([2, 3, 4, 5, 6] as const)(
-    "migrates schema %i to schema 7 while preserving historical runs",
+  it.each([2, 3, 4, 5, 6, 7] as const)(
+    "migrates schema %i to schema 8 while preserving historical runs",
     (version) => {
       const { path, runId } = createHistoricalDatabase(version);
       const store = SqliteStateStore.open(path);
 
       try {
         expect(store.runtimeDiagnostics()).toEqual({
-          schemaVersion: 7,
+          schemaVersion: 8,
           journalMode: "wal",
           foreignKeys: true,
           busyTimeoutMs: 5000,
@@ -717,7 +728,6 @@ describe("SQLite state store", () => {
           revalidationEpoch: 1,
           packageReference: null,
           planApprovalBinding: null,
-          trustManifestHash: null,
           repositoryIdentityHash: null,
           repositoryIdentity: null,
           toolIdentities: null,
@@ -732,28 +742,30 @@ describe("SQLite state store", () => {
 
         const bound = store.bindRunTrust({
           runId,
-          trustManifestHash: "1".repeat(64),
-          repositoryIdentityHash: repositoryIdentity.repositoryIdentityHash,
-          repositoryIdentity,
-          toolIdentities: [
-            {
-              name: "node",
-              resolvedPath: "/usr/bin/node",
-              realpath: "/usr/bin/node",
-              sha256: "3".repeat(64),
-              version: "24.18.0",
-            },
-          ],
-          lockfileHash: "4".repeat(64),
-          workspaceManifestHash: "5".repeat(64),
-          analyzerVersion: "1.0.0",
-          remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
-          commonGitDirIdentity: "6".repeat(64),
+          trustManifest: createTrustManifest({
+            createdAt: "2026-07-27T09:00:00.000Z",
+            toolIdentities: [
+              {
+                name: "node",
+                resolvedPath: process.execPath,
+                realpath: process.execPath,
+                sha256:
+                  "ee6fb0e015284d83a91e8ec5213f43a157f8a392b58555301682892ba928c04a",
+                version: "24.18.0",
+              },
+            ],
+            repositoryIdentity,
+            lockfileHash: "4".repeat(64),
+            workspaceManifestHash: "5".repeat(64),
+            packageManifestHash: "0".repeat(64),
+            analyzerVersion: "1.0.0",
+            commonGitDirIdentity: "6".repeat(64),
+          }),
           correlationId: runId,
           now: new Date("2026-07-27T09:00:00.000Z"),
         });
 
-        expect(bound.trustManifestHash).toBe("1".repeat(64));
+        expect(bound.trustManifestHash).toMatch(/^[a-f0-9]{64}$/);
         expect(bound.repositoryIdentityHash).toBe(
           repositoryIdentity.repositoryIdentityHash,
         );
@@ -782,8 +794,8 @@ describe("SQLite state store", () => {
           .all()
           .map((row) => String(row.name));
 
-        expect(Number(userVersion?.user_version)).toBe(7);
-        expect(Number(schemaMeta?.version)).toBe(7);
+        expect(Number(userVersion?.user_version)).toBe(8);
+        expect(Number(schemaMeta?.version)).toBe(8);
         expect(String(schemaMeta?.migration_state)).toBe("COMPLETE");
         expect(String(integrity?.integrity_check)).toBe("ok");
 
@@ -796,6 +808,7 @@ describe("SQLite state store", () => {
             "plan_approval_binding_json",
             ...TRUST_RUN_COLUMNS,
             ...V7_RUN_COLUMNS,
+            ...V8_RUN_COLUMNS,
           ]),
         );
       } finally {
@@ -824,15 +837,15 @@ describe("SQLite state store", () => {
 
     const input = {
       runId: "run-trust",
-      trustManifestHash: "1".repeat(64),
       repositoryIdentityHash: repositoryIdentity.repositoryIdentityHash,
       repositoryIdentity,
       toolIdentities: [
         {
           name: "node",
-          resolvedPath: "/usr/bin/node",
-          realpath: "/usr/bin/node",
-          sha256: "3".repeat(64),
+          resolvedPath: process.execPath,
+          realpath: process.execPath,
+          sha256:
+            "ee6fb0e015284d83a91e8ec5213f43a157f8a392b58555301682892ba928c04a",
           version: "24.18.0",
         },
       ],
@@ -845,9 +858,25 @@ describe("SQLite state store", () => {
       now: new Date("2026-07-26T23:00:00.000Z"),
     };
 
-    const first = store.bindRunTrust(input);
+    const first = store.bindRunTrust({
+      runId: input.runId,
+      trustManifest: createTrustManifest({
+        createdAt: "2026-07-26T23:00:00.000Z",
+        toolIdentities: input.toolIdentities,
+        repositoryIdentity: input.repositoryIdentity,
+        lockfileHash: input.lockfileHash,
+        workspaceManifestHash: input.workspaceManifestHash,
+        packageManifestHash: "1".repeat(64),
+        analyzerVersion: input.analyzerVersion,
+        commonGitDirIdentity: input.commonGitDirIdentity,
+      }),
+      correlationId: input.correlationId,
+      now: input.now,
+    });
 
-    expect(first.trustManifestHash).toBe(input.trustManifestHash);
+    expect(first.trustManifestHash).toBe(
+      first.trustManifest!.trustManifestHash,
+    );
     expect(first.repositoryIdentityHash).toBe(input.repositoryIdentityHash);
     expect(first.repositoryIdentity).toEqual(input.repositoryIdentity);
     expect(first.toolIdentities).toEqual(input.toolIdentities);
@@ -857,12 +886,39 @@ describe("SQLite state store", () => {
     expect(first.remoteIdentity).toBe(input.remoteIdentity);
     expect(first.commonGitDirIdentity).toBe(input.commonGitDirIdentity);
 
-    expect(store.bindRunTrust(input)).toEqual(first);
+    expect(
+      store.bindRunTrust({
+        runId: input.runId,
+        trustManifest: createTrustManifest({
+          createdAt: "2026-07-26T23:00:00.000Z",
+          toolIdentities: input.toolIdentities,
+          repositoryIdentity: input.repositoryIdentity,
+          lockfileHash: input.lockfileHash,
+          workspaceManifestHash: input.workspaceManifestHash,
+          packageManifestHash: "1".repeat(64),
+          analyzerVersion: input.analyzerVersion,
+          commonGitDirIdentity: input.commonGitDirIdentity,
+        }),
+        correlationId: input.correlationId,
+        now: input.now,
+      }),
+    ).toEqual(first);
 
     expect(() =>
       store.bindRunTrust({
-        ...input,
-        trustManifestHash: "9".repeat(64),
+        runId: input.runId,
+        trustManifest: createTrustManifest({
+          createdAt: "2026-07-26T23:00:00.000Z",
+          toolIdentities: input.toolIdentities,
+          repositoryIdentity: input.repositoryIdentity,
+          lockfileHash: input.lockfileHash,
+          workspaceManifestHash: input.workspaceManifestHash,
+          packageManifestHash: "2".repeat(64),
+          analyzerVersion: input.analyzerVersion,
+          commonGitDirIdentity: input.commonGitDirIdentity,
+        }),
+        correlationId: input.correlationId,
+        now: input.now,
       }),
     ).toThrow(/immutable and does not match/u);
 

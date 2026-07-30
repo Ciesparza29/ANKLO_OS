@@ -51,7 +51,7 @@ describe("Remediation 16.4-R2 Verification", () => {
   it("enforces schema v3 and audit hardening (ANKLO-16-004, ANKLO-16-006)", () => {
     const { store } = createStore();
     const diag = store.runtimeDiagnostics();
-    expect(diag.schemaVersion).toBe(7);
+    expect(diag.schemaVersion).toBe(8);
 
     const now = new Date("2026-07-26T12:00:00Z");
     store.createRun({
@@ -121,7 +121,7 @@ describe("Remediation 16.4-R2 Verification", () => {
     db.close();
 
     const store = SqliteStateStore.open(dbPath);
-    expect(store.runtimeDiagnostics().schemaVersion).toBe(7);
+    expect(store.runtimeDiagnostics().schemaVersion).toBe(8);
     store.close();
 
     const files = readdirSync(join(dbPath, ".."));
@@ -407,7 +407,7 @@ describe("Remediation 16.4-R2 Verification", () => {
     recoveryStore.close();
 
     const normalStore = SqliteStateStore.open(path);
-    expect(normalStore.runtimeDiagnostics().schemaVersion).toBe(7);
+    expect(normalStore.runtimeDiagnostics().schemaVersion).toBe(8);
     normalStore.close();
   });
 
@@ -449,7 +449,7 @@ describe("Remediation 16.4-R2 Verification", () => {
     expect(res.status).toBe(0);
     let output = JSON.parse(res.stdout);
     expect(output.data.read_only).toBe(true);
-    expect(output.data.schema_version).toBe(7);
+    expect(output.data.schema_version).toBe(8);
 
     res = runCli(["state:recover", "--config", configPath, "--format", "json"]);
     expect(res.status).toBe(0);

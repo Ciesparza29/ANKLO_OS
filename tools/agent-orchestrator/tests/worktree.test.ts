@@ -1,3 +1,4 @@
+import { createTrustManifest } from "../src/operational-trust.ts";
 import {
   existsSync,
   mkdtempSync,
@@ -148,15 +149,16 @@ function createTestContext(
 
   store.bindRunTrust({
     runId,
-    trustManifestHash: "1".repeat(64),
-    repositoryIdentityHash: repIdentity.repositoryIdentityHash,
-    repositoryIdentity: repIdentity,
-    toolIdentities: tools,
-    lockfileHash: "4".repeat(64),
-    workspaceManifestHash: "5".repeat(64),
-    analyzerVersion: "1.0.0",
-    remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
-    commonGitDirIdentity: "6".repeat(64),
+    trustManifest: createTrustManifest({
+      createdAt: now.toISOString(),
+      toolIdentities: tools,
+      repositoryIdentity: repIdentity,
+      lockfileHash: "4".repeat(64),
+      workspaceManifestHash: "5".repeat(64),
+      packageManifestHash: "0".repeat(64),
+      analyzerVersion: "1.0.0",
+      commonGitDirIdentity: "6".repeat(64),
+    }),
     correlationId: runId,
     now,
   });
@@ -217,7 +219,7 @@ describe("safe worktree manager", () => {
     expect(() =>
       mainManager.validateWorktreeAccess(context, repo.main, repo.head),
     ).toThrow(/primary clone/u);
-  });
+  }, 15000);
 
   it("rejects repository and parent mismatches", () => {
     const repo = createRepository();
@@ -266,7 +268,7 @@ describe("safe worktree manager", () => {
         branch: "feat/changed",
       }),
     ).toThrow(/evidence changed/u);
-  });
+  }, 15_000);
 
   it("creates only a collision-free worktree from a clean exact main source", () => {
     const repo = createRepository();

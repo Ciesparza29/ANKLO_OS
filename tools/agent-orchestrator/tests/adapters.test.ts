@@ -1,3 +1,4 @@
+import { createTrustManifest } from "../src/operational-trust.ts";
 import {
   existsSync,
   mkdtempSync,
@@ -166,15 +167,16 @@ function createTestContext(
 
   store.bindRunTrust({
     runId,
-    trustManifestHash: "1".repeat(64),
-    repositoryIdentityHash: repIdentity.repositoryIdentityHash,
-    repositoryIdentity: repIdentity,
-    toolIdentities: tools,
-    lockfileHash: "4".repeat(64),
-    workspaceManifestHash: "5".repeat(64),
-    analyzerVersion: "1.0.0",
-    remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
-    commonGitDirIdentity: "6".repeat(64),
+    trustManifest: createTrustManifest({
+      createdAt: now.toISOString(),
+      toolIdentities: tools,
+      repositoryIdentity: repIdentity,
+      lockfileHash: "4".repeat(64),
+      workspaceManifestHash: "5".repeat(64),
+      packageManifestHash: "0".repeat(64),
+      analyzerVersion: "1.0.0",
+      commonGitDirIdentity: "6".repeat(64),
+    }),
     correlationId: runId,
     now,
   });
@@ -266,11 +268,76 @@ describe("Codex 0.144.6 read-only adapter", () => {
     installMockCodex(
       repo.root,
       `#!/bin/sh
-all="$*"
-case "$all" in
-  *"--ignore-user-config"*"mcp_servers={}"*"--sandbox read-only"*"--ephemeral"*"--json"*"--output-schema"*"--cd"*) ;;
-  *) exit 93 ;;
-esac
+set -eu
+index=0
+separator_index=-1
+prompt_index=-1
+expect_value=""
+seen_ignore_user_config=0
+seen_ignore_rules=0
+seen_strict_config=0
+seen_mcp=0
+seen_sandbox=0
+seen_ephemeral=0
+seen_json=0
+seen_output_schema=0
+seen_cd=0
+for arg in "$@"; do
+  if [ -n "$expect_value" ]; then
+    case "$expect_value" in
+      "__PATH__")
+        case "$arg" in
+          /*) ;;
+          *) exit 93 ;;
+        esac
+        case "$index" in
+          11|13) ;;
+          *) exit 93 ;;
+        esac
+        if [ "$index" -eq 11 ]; then seen_output_schema=1; fi
+        if [ "$index" -eq 13 ]; then seen_cd=1; fi
+        ;;
+      *)
+        [ "$arg" = "$expect_value" ] || exit 93
+        case "$expect_value" in
+          "mcp_servers={}") seen_mcp=1 ;;
+          "read-only") seen_sandbox=1 ;;
+        esac
+        ;;
+    esac
+    expect_value=""
+    index=$((index + 1))
+    continue
+  fi
+  case "$index:$arg" in
+    "0:exec") ;;
+    "1:--ignore-user-config") seen_ignore_user_config=1 ;;
+    "2:--ignore-rules") seen_ignore_rules=1 ;;
+    "3:--strict-config") seen_strict_config=1 ;;
+    "4:-c") expect_value="mcp_servers={}" ;;
+    "6:--sandbox") expect_value="read-only" ;;
+    "8:--ephemeral") seen_ephemeral=1 ;;
+    "9:--json") seen_json=1 ;;
+    "10:--output-schema") expect_value="__PATH__" ;;
+    "12:--cd") expect_value="__PATH__" ;;
+    "14:--") separator_index="$index" ;;
+    "15:--dangerously-bypass-approvals-and-sandbox") prompt_index="$index" ;;
+    *) exit 93 ;;
+  esac
+  index=$((index + 1))
+done
+[ "$index" -eq 16 ] || exit 93
+[ "$separator_index" -eq 14 ] || exit 93
+[ "$prompt_index" -eq 15 ] || exit 93
+[ "$seen_ignore_user_config" -eq 1 ] || exit 93
+[ "$seen_ignore_rules" -eq 1 ] || exit 93
+[ "$seen_strict_config" -eq 1 ] || exit 93
+[ "$seen_mcp" -eq 1 ] || exit 93
+[ "$seen_sandbox" -eq 1 ] || exit 93
+[ "$seen_ephemeral" -eq 1 ] || exit 93
+[ "$seen_json" -eq 1 ] || exit 93
+[ "$seen_output_schema" -eq 1 ] || exit 93
+[ "$seen_cd" -eq 1 ] || exit 93
 printf '%s\\n' '{"type":"thread.started","thread_id":"test"}'
 printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"{\\"decision\\":\\"APPROVE\\",\\"summary\\":\\"Verified\\",\\"findings\\":[]}"}}'
 `,
@@ -293,11 +360,11 @@ printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"
       context,
       repo.worktree,
       repo.head,
-      "Review this exact worktree",
+      "--dangerously-bypass-approvals-and-sandbox",
     );
     expect(result.result.decision).toBe("APPROVE");
     expect(result.beforeEvidence.headSha).toBe(result.afterEvidence.headSha);
-  });
+  }, 15000);
 
   it("rejects mutation during Codex execution", async () => {
     const repo = createWorktree();

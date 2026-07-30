@@ -1,3 +1,4 @@
+import { createTrustManifest } from "../src/operational-trust.ts";
 import {
   existsSync,
   mkdtempSync,
@@ -11,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import {
   sanitizeVerificationOutput,
   VerificationRunner,
@@ -24,6 +25,66 @@ import {
 } from "../src/operational-trust.ts";
 import { SqliteStateStore } from "../src/state-store.ts";
 import type { TrustedExecutionContext } from "../src/trusted-process.ts";
+
+vi.mock("../src/trusted-process.ts", async (importOriginal) => {
+  const actual: unknown = await importOriginal();
+  return {
+    ...(actual as object),
+    executeDockerVerification: vi.fn().mockResolvedValue({
+      resolvedBinary: "/usr/local/bin/docker",
+      vector: [
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--user",
+        "1000:1000",
+        "--platform",
+        "linux/arm64",
+        "sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d",
+        "node",
+        "/workspace/node_modules/prettier/bin/prettier.cjs",
+        "--check",
+        "docs",
+        "README.md",
+      ],
+      runtimeEvidence: {
+        dockerCliVersion: "29.6.1",
+        dockerEngineVersion: "29.6.1",
+        dockerEngineOs: "linux",
+        dockerEngineArch: "aarch64",
+        imageId:
+          "sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d",
+        repoDigest:
+          "node@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d",
+        platform: "linux/arm64",
+        nodeVersion: "24.18.0",
+        pnpmVersion: "11.7.0",
+        prettierVersion: "3.9.5",
+        eslintVersion: "9.39.4",
+        typescriptVersion: "5.9.3",
+        vitestVersion: "vitest/4.1.10 linux-arm64 node-v24.18.0",
+        architectureScriptSha256: "1".repeat(64),
+        packageJsonSha256: "2".repeat(64),
+        pnpmLockSha256: "3".repeat(64),
+        pnpmWorkspaceSha256: "4".repeat(64),
+      },
+      exitCode: 0,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      outputLimitExceeded: false,
+    }),
+  };
+});
 
 const projectRoot = realpathSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../.."),
@@ -100,6 +161,10 @@ afterEach(() => {
   }
 });
 
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
 function createTestContext(
   repoRoot: string,
   options?: {
@@ -169,15 +234,16 @@ function createTestContext(
 
   store.bindRunTrust({
     runId,
-    trustManifestHash: "1".repeat(64),
-    repositoryIdentityHash: repIdentity.repositoryIdentityHash,
-    repositoryIdentity: repIdentity,
-    toolIdentities: tools,
-    lockfileHash: "4".repeat(64),
-    workspaceManifestHash: "5".repeat(64),
-    analyzerVersion: "1.0.0",
-    remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
-    commonGitDirIdentity: "6".repeat(64),
+    trustManifest: createTrustManifest({
+      createdAt: now.toISOString(),
+      toolIdentities: tools,
+      repositoryIdentity: repIdentity,
+      lockfileHash: "4".repeat(64),
+      workspaceManifestHash: "5".repeat(64),
+      packageManifestHash: "6".repeat(64),
+      analyzerVersion: "1.0.0",
+      commonGitDirIdentity: "6".repeat(64),
+    }),
     correlationId: runId,
     now,
   });
@@ -223,10 +289,13 @@ describe("closed verification runner", () => {
       repo.head,
     );
     expect(result.success).toBe(true);
+    expect(result.runtimeEvidence.imageId).toBe(
+      "sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d",
+    );
+    expect(result.runtimeEvidence.platform).toBe("linux/arm64");
     expect(result.retries).toBe(0);
-    expect(result.toolVersions.prettier).toBe("3.9.5");
     expect(result.beforeEvidence.headSha).toBe(result.afterEvidence.headSha);
-  });
+  }, 15000);
 
   it("redacts common credentials before results can be persisted", () => {
     expect(

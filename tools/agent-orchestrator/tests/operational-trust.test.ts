@@ -47,6 +47,38 @@ function stateStoreFor(
   } as unknown as StateStore;
 }
 
+function trustedRunFor(
+  runId: string,
+  runtimeIdentity = createNodeToolIdentity(),
+): RunRecord {
+  const repository = repositoryIdentity();
+  const trustManifest = createTrustManifest({
+    createdAt: "2026-07-26T22:00:00.000Z",
+    toolIdentities: [runtimeIdentity],
+    repositoryIdentity: repository,
+    lockfileHash: "9".repeat(64),
+    workspaceManifestHash: "a".repeat(64),
+    packageManifestHash: "c".repeat(64),
+    analyzerVersion: "1.0.0",
+    commonGitDirIdentity: "b".repeat(64),
+  });
+
+  return {
+    runId,
+    trustManifestHash: trustManifest.trustManifestHash,
+    repositoryIdentityHash: repository.repositoryIdentityHash,
+    repositoryIdentity: repository,
+    toolIdentities: trustManifest.toolIdentities,
+    lockfileHash: trustManifest.lockfileHash,
+    workspaceManifestHash: trustManifest.workspaceManifestHash,
+    packageManifestHash: trustManifest.packageManifestHash,
+    analyzerVersion: trustManifest.analyzerVersion,
+    remoteIdentity: repository.remoteIdentity,
+    commonGitDirIdentity: trustManifest.commonGitDirIdentity,
+    trustManifest,
+  } as unknown as RunRecord;
+}
+
 describe("operational trust contracts", () => {
   it("anchors the runtime identity to the current executable", () => {
     const identity = createNodeToolIdentity();
@@ -66,6 +98,8 @@ describe("operational trust contracts", () => {
       repositoryIdentity: repositoryIdentity(),
       lockfileHash: "5".repeat(64),
       workspaceManifestHash: "6".repeat(64),
+      packageManifestHash: "7".repeat(64),
+      commonGitDirIdentity: "8".repeat(64),
     };
 
     const first = createTrustManifest(seed);
@@ -73,7 +107,7 @@ describe("operational trust contracts", () => {
 
     expect(first).toEqual(second);
     expect(first.trustManifestHash).toMatch(/^[a-f0-9]{64}$/u);
-    expect(assertTrustManifestIntegrity(first)).toBe(first);
+    expect(assertTrustManifestIntegrity(first)).toStrictEqual(first);
 
     expect(() =>
       assertTrustManifestIntegrity({
@@ -127,22 +161,11 @@ describe("operational trust contracts", () => {
   it("binds trusted tool lookup to a persisted run", () => {
     const runtimeIdentity = createNodeToolIdentity();
 
-    const trustedRun = {
-      runId: "run-trusted",
-      trustManifestHash: "7".repeat(64),
-      repositoryIdentityHash: "8".repeat(64),
-      repositoryIdentity: repositoryIdentity(),
-      toolIdentities: [runtimeIdentity],
-      lockfileHash: "9".repeat(64),
-      workspaceManifestHash: "a".repeat(64),
-      analyzerVersion: "1.0.0",
-      remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
-      commonGitDirIdentity: "b".repeat(64),
-    } as unknown as RunRecord;
+    const trustedRun = trustedRunFor("run-trusted", runtimeIdentity);
 
     const stateStore = stateStoreFor(trustedRun);
 
-    expect(assertRunHasTrustManifest("run-trusted", stateStore)).toBe(
+    expect(assertRunHasTrustManifest("run-trusted", stateStore)).toStrictEqual(
       trustedRun,
     );
 
@@ -168,25 +191,14 @@ describe("operational trust contracts", () => {
         } as unknown as RunRecord),
         runtimeIdentity.name,
       ),
-    ).toThrow(/TRUSTED_TOOL_IDENTITY_MISMATCH/u);
+    ).toThrow(/TRUST_MANIFEST_INTEGRITY_FAILED/u);
   });
 
   it("checks kill switches and persisted trust before an effect", () => {
     const runtimeIdentity = createNodeToolIdentity();
     let checkedRunId: string | undefined;
 
-    const trustedRun = {
-      runId: "run-effect",
-      trustManifestHash: "1".repeat(64),
-      repositoryIdentityHash: "2".repeat(64),
-      repositoryIdentity: repositoryIdentity(),
-      toolIdentities: [runtimeIdentity],
-      lockfileHash: "3".repeat(64),
-      workspaceManifestHash: "4".repeat(64),
-      analyzerVersion: "1.0.0",
-      remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
-      commonGitDirIdentity: "5".repeat(64),
-    } as unknown as RunRecord;
+    const trustedRun = trustedRunFor("run-effect", runtimeIdentity);
 
     const stateStore = stateStoreFor(trustedRun, (runId) => {
       checkedRunId = runId;

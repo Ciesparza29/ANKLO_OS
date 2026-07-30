@@ -6,8 +6,10 @@ import type { ApprovalKind, ObservedApproval } from "./approvals.ts";
 import { OrchestratorError } from "./errors.ts";
 import {
   assertRepositoryIdentityIntegrity,
+  assertTrustManifestIntegrity,
   type RepositoryIdentity,
   type ToolIdentity,
+  type TrustManifest,
 } from "./operational-trust.ts";
 import {
   assertTransition,
@@ -19,7 +21,7 @@ import {
   type PlanApprovalBinding,
 } from "./work-package.ts";
 
-const STATE_SCHEMA_VERSION = 7;
+const STATE_SCHEMA_VERSION = 8;
 const TRUST_HASH_PATTERN = /^[a-f0-9]{64}$/u;
 const BUSY_TIMEOUT_MS = 5_000;
 
@@ -54,9 +56,11 @@ export type RunRecord = Readonly<{
   toolIdentities: readonly ToolIdentity[] | null;
   lockfileHash: string | null;
   workspaceManifestHash: string | null;
+  packageManifestHash: string | null;
   analyzerVersion: string | null;
   remoteIdentity: string | null;
   commonGitDirIdentity: string | null;
+  trustManifest: null | import("./operational-trust.ts").TrustManifest;
   pullRequestNumber: number | null;
   pullRequestHeadSha: string | null;
   revalidationEpoch: number;
@@ -66,19 +70,10 @@ export type RunRecord = Readonly<{
 
 export type BindRunTrustInput = Readonly<{
   runId: string;
-  trustManifestHash: string;
-  repositoryIdentityHash: string;
-  repositoryIdentity: RepositoryIdentity;
-  toolIdentities: readonly ToolIdentity[];
-  lockfileHash: string;
-  workspaceManifestHash: string;
-  analyzerVersion: string;
-  remoteIdentity: string;
-  commonGitDirIdentity: string;
+  trustManifest: import("./operational-trust.ts").TrustManifest;
   correlationId: string;
   now: Date;
 }>;
-
 export type LeaseRecord = Readonly<{
   leaseId: string;
   kind: "ISSUE" | "WORKTREE";
@@ -331,6 +326,8 @@ const SCHEMA_SPEC = {
       "analyzer_version",
       "remote_identity",
       "common_git_dir_identity",
+      "package_manifest_hash",
+      "trust_manifest_json",
       "pull_request_number",
       "pull_request_head_sha",
       "created_at",
@@ -441,6 +438,27 @@ function asRow(value: unknown): DbRow {
 function scalarNumber(value: unknown): number {
   const row = asRow(value);
   return Number(Object.values(row)[0]);
+}
+
+function parseTrustManifestJson(value: unknown): null | TrustManifest {
+  if (value === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = typeof value === "string" ? JSON.parse(value) : value;
+  } catch {
+    throw new OrchestratorError(
+      "STATE_STORE_CORRUPT",
+      "Persisted trust manifest is not valid JSON",
+    );
+  }
+  try {
+    return assertTrustManifestIntegrity(parsed as TrustManifest);
+  } catch {
+    throw new OrchestratorError(
+      "STATE_STORE_CORRUPT",
+      "Persisted trust manifest failed integrity validation",
+    );
+  }
 }
 
 function scalarString(value: unknown): string {
@@ -590,6 +608,10 @@ function toRun(row: DbRow): RunRecord {
       row.workspace_manifest_hash === null
         ? null
         : String(row.workspace_manifest_hash),
+    packageManifestHash:
+      row.package_manifest_hash === null
+        ? null
+        : String(row.package_manifest_hash),
     analyzerVersion:
       row.analyzer_version === null ? null : String(row.analyzer_version),
     remoteIdentity:
@@ -598,6 +620,7 @@ function toRun(row: DbRow): RunRecord {
       row.common_git_dir_identity === null
         ? null
         : String(row.common_git_dir_identity),
+    trustManifest: parseTrustManifestJson(row.trust_manifest_json),
     packageReference:
       row.package_hash === null ||
       row.package_relative_path == null ||
@@ -820,20 +843,27 @@ export class SqliteStateStore implements StateStore {
       this.#migrateV4toV5();
       this.#migrateV5toV6(false);
       this.#migrateV6toV7(false);
+      this.#migrateV7toV8(false);
     } else if (userVersion === 3) {
       this.#migrateV3toV4();
       this.#migrateV4toV5();
       this.#migrateV5toV6(false);
       this.#migrateV6toV7(false);
+      this.#migrateV7toV8(false);
     } else if (userVersion === 4) {
       this.#migrateV4toV5();
       this.#migrateV5toV6(false);
       this.#migrateV6toV7(false);
+      this.#migrateV7toV8(false);
     } else if (userVersion === 5) {
       this.#migrateV5toV6(true);
       this.#migrateV6toV7(false);
+      this.#migrateV7toV8(false);
     } else if (userVersion === 6) {
       this.#migrateV6toV7(true);
+      this.#migrateV7toV8(false);
+    } else if (userVersion === 7) {
+      this.#migrateV7toV8(true);
     } else if (userVersion !== STATE_SCHEMA_VERSION) {
       throw new OrchestratorError(
         "STATE_STORE_SCHEMA_UNSUPPORTED",
@@ -885,6 +915,8 @@ export class SqliteStateStore implements StateStore {
         tool_identities_json TEXT,
         lockfile_hash TEXT,
         workspace_manifest_hash TEXT,
+        package_manifest_hash TEXT,
+        trust_manifest_json TEXT,
         analyzer_version TEXT,
         remote_identity TEXT,
         common_git_dir_identity TEXT,
@@ -1175,6 +1207,38 @@ export class SqliteStateStore implements StateStore {
       );
 
       this.#db.exec("PRAGMA user_version = 7;");
+    });
+  }
+
+  #migrateV7toV8(createBackup: boolean): void {
+    const preCheck = scalarString(
+      this.#db.prepare("PRAGMA integrity_check").get(),
+    );
+
+    if (preCheck !== "ok") {
+      throw new OrchestratorError(
+        "STATE_STORE_INTEGRITY_FAILED",
+        "Pre-migration integrity check failed",
+        { details: { result: preCheck } },
+      );
+    }
+
+    if (createBackup && this.#databasePath !== ":memory:") {
+      this.#backupDatabase(7);
+    }
+
+    this.#withImmediate(() => {
+      this.#db.exec("ALTER TABLE runs ADD COLUMN package_manifest_hash TEXT;");
+      this.#db.exec("ALTER TABLE runs ADD COLUMN trust_manifest_json TEXT;");
+
+      this.#db.exec(
+        `UPDATE schema_meta
+         SET version = 8,
+             applied_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE singleton_id = 1`,
+      );
+
+      this.#db.exec("PRAGMA user_version = 8;");
     });
   }
 
@@ -1737,85 +1801,25 @@ export class SqliteStateStore implements StateStore {
   }
 
   bindRunTrust(input: BindRunTrustInput): RunRecord {
-    let normalizedRepositoryIdentity: RepositoryIdentity;
+    let trustManifest: TrustManifest;
 
     try {
-      normalizedRepositoryIdentity = assertRepositoryIdentityIntegrity(
-        input.repositoryIdentity,
-      );
+      trustManifest = assertTrustManifestIntegrity(input.trustManifest);
     } catch {
       throw new OrchestratorError(
         "INVALID_TRUST_BINDING",
-        "Repository identity failed canonical integrity validation",
+        "Trust manifest failed canonical integrity validation",
       );
     }
 
-    if (
-      normalizedRepositoryIdentity.repositoryIdentityHash !==
-      input.repositoryIdentityHash
-    ) {
-      throw new OrchestratorError(
-        "INVALID_TRUST_BINDING",
-        "Repository identity hash does not match its canonical payload",
-      );
-    }
-
-    for (const [label, digest] of [
-      ["trustManifestHash", input.trustManifestHash],
-      ["repositoryIdentityHash", input.repositoryIdentityHash],
-      ["lockfileHash", input.lockfileHash],
-      ["workspaceManifestHash", input.workspaceManifestHash],
-      ["commonGitDirIdentity", input.commonGitDirIdentity],
-    ] as const) {
-      if (!TRUST_HASH_PATTERN.test(digest)) {
-        throw new OrchestratorError(
-          "INVALID_TRUST_BINDING",
-          `${label} must be a SHA-256 digest`,
-        );
-      }
-    }
-
-    if (
-      input.toolIdentities.length === 0 ||
-      input.analyzerVersion.trim().length === 0 ||
-      input.remoteIdentity.trim().length === 0 ||
-      input.correlationId.trim().length === 0
-    ) {
-      throw new OrchestratorError(
-        "INVALID_TRUST_BINDING",
-        "Trust binding contains an empty required value",
-      );
-    }
-
-    const normalizedTools = Object.freeze(
-      input.toolIdentities.map((identity) => {
-        if (
-          identity.name.trim().length === 0 ||
-          identity.resolvedPath.length === 0 ||
-          identity.realpath.length === 0 ||
-          identity.version.trim().length === 0 ||
-          !TRUST_HASH_PATTERN.test(identity.sha256)
-        ) {
-          throw new OrchestratorError(
-            "INVALID_TRUST_BINDING",
-            "Tool identity is incomplete or invalid",
-          );
-        }
-
-        return Object.freeze({
-          name: identity.name,
-          resolvedPath: identity.resolvedPath,
-          realpath: identity.realpath,
-          sha256: identity.sha256,
-          version: identity.version,
-        });
-      }),
-    );
+    const normalizedRepositoryIdentity = trustManifest.repositoryIdentity;
+    const normalizedTools = trustManifest.toolIdentities;
 
     const serializedRepositoryIdentity = JSON.stringify(
       normalizedRepositoryIdentity,
     );
     const serializedTools = JSON.stringify(normalizedTools);
+    const serializedTrustManifest = JSON.stringify(trustManifest);
     const updatedAt = input.now.toISOString();
 
     return this.#withImmediate(() => {
@@ -1835,25 +1839,30 @@ export class SqliteStateStore implements StateStore {
         toolIdentities: current.toolIdentities,
         lockfileHash: current.lockfileHash,
         workspaceManifestHash: current.workspaceManifestHash,
+        packageManifestHash: current.packageManifestHash,
         analyzerVersion: current.analyzerVersion,
         remoteIdentity: current.remoteIdentity,
         commonGitDirIdentity: current.commonGitDirIdentity,
+        trustManifest: current.trustManifest,
       };
 
       const isUnbound = Object.values(currentBinding).every(
-        (value) => value === null,
+        (value) => value === null || value === undefined,
       );
 
       const desiredBinding = {
-        trustManifestHash: input.trustManifestHash,
-        repositoryIdentityHash: input.repositoryIdentityHash,
+        trustManifestHash: trustManifest.trustManifestHash,
+        repositoryIdentityHash:
+          trustManifest.repositoryIdentity.repositoryIdentityHash,
         repositoryIdentity: normalizedRepositoryIdentity,
         toolIdentities: normalizedTools,
-        lockfileHash: input.lockfileHash,
-        workspaceManifestHash: input.workspaceManifestHash,
-        analyzerVersion: input.analyzerVersion,
-        remoteIdentity: input.remoteIdentity,
-        commonGitDirIdentity: input.commonGitDirIdentity,
+        lockfileHash: trustManifest.lockfileHash,
+        workspaceManifestHash: trustManifest.workspaceManifestHash,
+        packageManifestHash: trustManifest.packageManifestHash,
+        analyzerVersion: trustManifest.analyzerVersion,
+        remoteIdentity: trustManifest.repositoryIdentity.remoteIdentity,
+        commonGitDirIdentity: trustManifest.commonGitDirIdentity,
+        trustManifest: trustManifest,
       };
 
       if (!isUnbound) {
@@ -1868,9 +1877,13 @@ export class SqliteStateStore implements StateStore {
           current.lockfileHash !== desiredBinding.lockfileHash ||
           current.workspaceManifestHash !==
             desiredBinding.workspaceManifestHash ||
+          current.packageManifestHash !== desiredBinding.packageManifestHash ||
           current.analyzerVersion !== desiredBinding.analyzerVersion ||
           current.remoteIdentity !== desiredBinding.remoteIdentity ||
-          current.commonGitDirIdentity !== desiredBinding.commonGitDirIdentity
+          current.commonGitDirIdentity !==
+            desiredBinding.commonGitDirIdentity ||
+          JSON.stringify(current.trustManifest) !==
+            JSON.stringify(desiredBinding.trustManifest)
         ) {
           throw new OrchestratorError(
             "IMMUTABLE_TRUST_BINDING_MISMATCH",
@@ -1890,6 +1903,8 @@ export class SqliteStateStore implements StateStore {
              tool_identities_json = ?,
              lockfile_hash = ?,
              workspace_manifest_hash = ?,
+             package_manifest_hash = ?,
+             trust_manifest_json = ?,
              analyzer_version = ?,
              remote_identity = ?,
              common_git_dir_identity = ?,
@@ -1903,6 +1918,8 @@ export class SqliteStateStore implements StateStore {
           serializedTools,
           desiredBinding.lockfileHash,
           desiredBinding.workspaceManifestHash,
+          desiredBinding.packageManifestHash,
+          serializedTrustManifest,
           desiredBinding.analyzerVersion,
           desiredBinding.remoteIdentity,
           desiredBinding.commonGitDirIdentity,

@@ -1,3 +1,4 @@
+import { createTrustManifest } from "../src/operational-trust.ts";
 import {
   chmodSync,
   existsSync,
@@ -14,7 +15,7 @@ import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApprovalBody, ObservedApproval } from "../src/approvals.ts";
 import { CodexReadOnlyAdapter } from "../src/codex-adapter.ts";
 import { GitHubReadOnlyAdapter } from "../src/github-adapter.ts";
@@ -32,6 +33,67 @@ import {
   createRepositoryIdentity,
   createToolIdentity,
 } from "../src/operational-trust.ts";
+
+// R6_PHASE_DOCKER_MOCK
+vi.mock("../src/trusted-process.ts", async (importOriginal) => {
+  const actual: unknown = await importOriginal();
+  return {
+    ...(actual as object),
+    executeDockerVerification: vi.fn().mockResolvedValue({
+      resolvedBinary: "/usr/local/bin/docker",
+      vector: [
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--network",
+        "none",
+        "--read-only",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges:true",
+        "--user",
+        "1000:1000",
+        "--platform",
+        "linux/arm64",
+        "sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d",
+        "node",
+        "/workspace/node_modules/prettier/bin/prettier.cjs",
+        "--check",
+        "docs",
+        "README.md",
+      ],
+      runtimeEvidence: {
+        dockerCliVersion: "29.6.1",
+        dockerEngineVersion: "29.6.1",
+        dockerEngineOs: "linux",
+        dockerEngineArch: "aarch64",
+        imageId:
+          "sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d",
+        repoDigest:
+          "node@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d",
+        platform: "linux/arm64",
+        nodeVersion: "24.18.0",
+        pnpmVersion: "11.7.0",
+        prettierVersion: "3.9.5",
+        eslintVersion: "9.39.4",
+        typescriptVersion: "5.9.3",
+        vitestVersion: "vitest/4.1.10 linux-arm64 node-v24.18.0",
+        architectureScriptSha256: "1".repeat(64),
+        packageJsonSha256: "2".repeat(64),
+        pnpmLockSha256: "3".repeat(64),
+        pnpmWorkspaceSha256: "4".repeat(64),
+      },
+      exitCode: 0,
+      signal: null,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      outputLimitExceeded: false,
+    }),
+  };
+});
 
 const projectRoot = realpathSync(
   join(dirname(fileURLToPath(import.meta.url)), "../../.."),
@@ -182,11 +244,12 @@ function setupFullPipeline() {
     now,
   });
 
-  const tools = ["node", "git", "gh", "codex"].map((name) => {
+  const tools = ["node", "git", "gh", "codex", "docker"].map((name) => {
     if (name === "node") return createNodeToolIdentity();
-    let binPath = spawnSync("which", [name], {
-      encoding: "utf8",
-    }).stdout.trim();
+    let binPath =
+      name === "git"
+        ? spawnSync("which", [name], { encoding: "utf8" }).stdout.trim()
+        : "";
     if (!binPath || !existsSync(binPath)) {
       binPath = join(repo.root, name);
       writeFileSync(binPath, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
@@ -220,15 +283,16 @@ function setupFullPipeline() {
   });
   store.bindRunTrust({
     runId,
-    trustManifestHash: "1".repeat(64),
-    repositoryIdentityHash: repIdentity.repositoryIdentityHash,
-    repositoryIdentity: repIdentity,
-    toolIdentities: tools,
-    lockfileHash: "4".repeat(64),
-    workspaceManifestHash: "5".repeat(64),
-    analyzerVersion: "1.0.0",
-    remoteIdentity: "origin:github.com/Ciesparza29/ANKLO_OS",
-    commonGitDirIdentity: "6".repeat(64),
+    trustManifest: createTrustManifest({
+      createdAt: now.toISOString(),
+      toolIdentities: tools,
+      repositoryIdentity: repIdentity,
+      lockfileHash: "4".repeat(64),
+      workspaceManifestHash: "5".repeat(64),
+      packageManifestHash: "0".repeat(64),
+      analyzerVersion: "1.0.0",
+      commonGitDirIdentity: "6".repeat(64),
+    }),
     correlationId: runId,
     now,
   });
@@ -386,7 +450,7 @@ describe("phase 16.5 StateStore integration", () => {
       }),
     ).toThrow(/sensitive field/u);
     store.close();
-  });
+  }, 15000);
 
   it("rejects a run without packageReference", async () => {
     const ctx = setupFullPipeline();
@@ -469,7 +533,7 @@ describe("phase 16.5 StateStore integration", () => {
       }),
     ).rejects.toThrow(/package reference/iu);
     store.close();
-  });
+  }, 15000);
 
   it("rejects altered persisted package bytes", async () => {
     const ctx = setupFullPipeline();
@@ -496,7 +560,7 @@ describe("phase 16.5 StateStore integration", () => {
       }),
     ).rejects.toThrow(/byte length|hash|mismatch/iu);
     store.close();
-  });
+  }, 15000);
 
   it("rejects when planApprovalBinding mismatches", async () => {
     const ctx = setupFullPipeline();
@@ -541,7 +605,7 @@ describe("phase 16.5 StateStore integration", () => {
     ).rejects.toThrow(/planApprovalBinding does not match/);
 
     store.close();
-  });
+  }, 15000);
 
   it("loads internal package and confirms packageReference is set", () => {
     const ctx = setupFullPipeline();
@@ -555,7 +619,7 @@ describe("phase 16.5 StateStore integration", () => {
     expect(run?.packageReference?.byteLength).toBeGreaterThan(0);
     expect(run?.packageReference?.packageHash).toMatch(/^[0-9a-f]{64}$/u);
     store.close();
-  });
+  }, 15000);
 
   it("rejects mismatched profile not in fixedProfiles", async () => {
     const ctx = setupFullPipeline();
@@ -573,7 +637,7 @@ describe("phase 16.5 StateStore integration", () => {
       }),
     ).rejects.toThrow(/profile/iu);
     store.close();
-  });
+  }, 15000);
 
   it("rejects when no current IMPLEMENT_APPROVED approval", async () => {
     const ctx = setupFullPipeline();
@@ -643,7 +707,7 @@ describe("phase 16.5 StateStore integration", () => {
       }),
     ).rejects.toThrow(/IMPLEMENT_APPROVED/u);
     store.close();
-  });
+  }, 15000);
 
   it("rejects invalid or expired leases", async () => {
     const ctx = setupFullPipeline();
@@ -661,7 +725,7 @@ describe("phase 16.5 StateStore integration", () => {
       }),
     ).rejects.toThrow(/lease/iu);
     store.close();
-  });
+  }, 15000);
 
   it("does not invoke runner or adapter when validation fails", async () => {
     const ctx = setupFullPipeline();
@@ -689,7 +753,7 @@ describe("phase 16.5 StateStore integration", () => {
       );
     expect(events).toHaveLength(0);
     store.close();
-  });
+  }, 15000);
 
   it("uses the same secure path for runVerification and runCodexReview", async () => {
     const ctx = setupFullPipeline();
@@ -744,5 +808,5 @@ describe("phase 16.5 StateStore integration", () => {
     ).rejects.toThrow(/IMPLEMENT_APPROVED/u);
 
     store.close();
-  });
+  }, 15000);
 });

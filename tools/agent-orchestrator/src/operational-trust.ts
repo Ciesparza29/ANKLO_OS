@@ -4,7 +4,7 @@ import { isAbsolute } from "node:path";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 
-export const TRUST_MANIFEST_SCHEMA_VERSION = 1 as const;
+export const TRUST_MANIFEST_SCHEMA_VERSION = 2 as const;
 export const ANALYZER_VERSION = "1.0.0";
 
 export type ToolName = string;
@@ -49,6 +49,8 @@ export interface TrustManifest {
   readonly repositoryIdentity: RepositoryIdentity;
   readonly lockfileHash: string;
   readonly workspaceManifestHash: string;
+  readonly packageManifestHash: string;
+  readonly commonGitDirIdentity: string;
   readonly analyzerVersion: string;
   readonly trustManifestHash: string;
 }
@@ -59,6 +61,8 @@ export interface TrustManifestSeed {
   readonly repositoryIdentity: RepositoryIdentity;
   readonly lockfileHash: string;
   readonly workspaceManifestHash: string;
+  readonly packageManifestHash: string;
+  readonly commonGitDirIdentity: string;
   readonly analyzerVersion?: string;
 }
 
@@ -136,7 +140,7 @@ export function assertToolIdentityIntegrity(
   ) {
     fail(
       "TRUSTED_TOOL_IDENTITY_MISMATCH",
-      "Persisted tool identity does not match the current executable",
+      `Persisted tool identity mismatch: ${canonicalPath} !== ${canonicalPersistedPath} || ${canonicalPath} !== ${normalized.realpath} || ${currentHash} !== ${normalized.sha256}`,
     );
   }
 
@@ -290,6 +294,8 @@ function manifestPayload(seed: TrustManifestSeed): Readonly<{
   repositoryIdentity: RepositoryIdentity;
   lockfileHash: string;
   workspaceManifestHash: string;
+  packageManifestHash: string;
+  commonGitDirIdentity: string;
   analyzerVersion: string;
 }> {
   if (Number.isNaN(Date.parse(seed.createdAt))) {
@@ -298,6 +304,8 @@ function manifestPayload(seed: TrustManifestSeed): Readonly<{
 
   assertSha256("lockfile hash", seed.lockfileHash);
   assertSha256("workspace manifest hash", seed.workspaceManifestHash);
+  assertSha256("package manifest hash", seed.packageManifestHash);
+  assertSha256("common git dir identity", seed.commonGitDirIdentity);
 
   const normalizedTools = [...seed.toolIdentities]
     .map(assertToolIdentityIntegrity)
@@ -326,6 +334,8 @@ function manifestPayload(seed: TrustManifestSeed): Readonly<{
     repositoryIdentity: normalizeRepositoryIdentity(seed.repositoryIdentity),
     lockfileHash: seed.lockfileHash,
     workspaceManifestHash: seed.workspaceManifestHash,
+    packageManifestHash: seed.packageManifestHash,
+    commonGitDirIdentity: seed.commonGitDirIdentity,
     analyzerVersion: analyzerVersion.trim(),
   });
 }
@@ -365,6 +375,8 @@ function manifestHash(payload: ReturnType<typeof manifestPayload>): string {
       },
       lockfileHash: payload.lockfileHash,
       workspaceManifestHash: payload.workspaceManifestHash,
+      packageManifestHash: payload.packageManifestHash,
+      commonGitDirIdentity: payload.commonGitDirIdentity,
       analyzerVersion: payload.analyzerVersion,
     }),
   );
@@ -414,6 +426,10 @@ export function createTrustManifest(seed: TrustManifestSeed): TrustManifest {
 export function assertTrustManifestIntegrity(
   trust: TrustManifest,
 ): TrustManifest {
+  if (trust.schemaVersion !== TRUST_MANIFEST_SCHEMA_VERSION) {
+    fail("INVALID_TRUST_SCHEMA", "Trust manifest schema version mismatch");
+  }
+
   assertSha256("trust manifest hash", trust.trustManifestHash);
 
   const payload = manifestPayload({
@@ -422,6 +438,8 @@ export function assertTrustManifestIntegrity(
     repositoryIdentity: trust.repositoryIdentity,
     lockfileHash: trust.lockfileHash,
     workspaceManifestHash: trust.workspaceManifestHash,
+    packageManifestHash: trust.packageManifestHash,
+    commonGitDirIdentity: trust.commonGitDirIdentity,
     analyzerVersion: trust.analyzerVersion,
   });
 
@@ -434,5 +452,8 @@ export function assertTrustManifestIntegrity(
     );
   }
 
-  return trust;
+  return Object.freeze({
+    ...payload,
+    trustManifestHash: expectedHash,
+  });
 }

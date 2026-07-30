@@ -1,14 +1,26 @@
+import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, realpathSync } from "node:fs";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
+import { delimiter, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { isRecord } from "./contracts.ts";
 import {
   assertRepositoryIdentityIntegrity,
   assertToolIdentityIntegrity,
+  assertTrustManifestIntegrity,
   type RepositoryIdentity,
   type ToolIdentity,
   type ToolName,
+  type TrustManifest,
 } from "./operational-trust.ts";
 import type { RunRecord, StateStore } from "./state-store.ts";
 
@@ -38,9 +50,11 @@ type TrustBoundRun = RunRecord &
     toolIdentities: readonly ToolIdentity[];
     lockfileHash: string;
     workspaceManifestHash: string;
+    packageManifestHash: string;
     analyzerVersion: string;
     remoteIdentity: string;
     commonGitDirIdentity: string;
+    trustManifest: TrustManifest;
   }>;
 
 export type AsyncExecutionResult = Readonly<{
@@ -68,9 +82,11 @@ function hasPersistedTrust(run: RunRecord): run is TrustBoundRun {
       toolIdentities: readonly ToolIdentity[];
       lockfileHash: string;
       workspaceManifestHash: string;
+      packageManifestHash: string;
       analyzerVersion: string;
       remoteIdentity: string;
       commonGitDirIdentity: string;
+      trustManifest: TrustManifest;
     }>;
 
   return (
@@ -85,6 +101,9 @@ function hasPersistedTrust(run: RunRecord): run is TrustBoundRun {
     SHA256_PATTERN.test(candidate.lockfileHash) &&
     typeof candidate.workspaceManifestHash === "string" &&
     SHA256_PATTERN.test(candidate.workspaceManifestHash) &&
+    typeof candidate.packageManifestHash === "string" &&
+    SHA256_PATTERN.test(candidate.packageManifestHash) &&
+    isRecord(candidate.trustManifest) &&
     typeof candidate.analyzerVersion === "string" &&
     candidate.analyzerVersion.trim().length > 0 &&
     typeof candidate.remoteIdentity === "string" &&
@@ -159,6 +178,8 @@ function verificationEnvironment(): NodeJS.ProcessEnv {
   return {
     ...baseEnvironment(),
     CI: "1",
+    DOCKER_HOST: "unix:///var/run/docker.sock",
+    DOCKER_CONFIG: "/nonexistent",
   };
 }
 
@@ -289,7 +310,29 @@ export function assertRunHasTrustManifest(
     );
   }
 
-  return run;
+  const manifest = assertTrustManifestIntegrity(run.trustManifest);
+  if (
+    run.trustManifestHash !== manifest.trustManifestHash ||
+    run.repositoryIdentityHash !==
+      manifest.repositoryIdentity.repositoryIdentityHash ||
+    JSON.stringify(run.repositoryIdentity) !==
+      JSON.stringify(manifest.repositoryIdentity) ||
+    JSON.stringify(run.toolIdentities) !==
+      JSON.stringify(manifest.toolIdentities) ||
+    run.lockfileHash !== manifest.lockfileHash ||
+    run.workspaceManifestHash !== manifest.workspaceManifestHash ||
+    run.packageManifestHash !== manifest.packageManifestHash ||
+    run.analyzerVersion !== manifest.analyzerVersion ||
+    run.remoteIdentity !== manifest.repositoryIdentity.remoteIdentity ||
+    run.commonGitDirIdentity !== manifest.commonGitDirIdentity
+  ) {
+    fail(
+      "TRUST_MANIFEST_INTEGRITY_FAILED",
+      `Run ${runId} trust copies do not match the canonical manifest`,
+    );
+  }
+
+  return Object.freeze({ ...run, trustManifest: manifest });
 }
 
 export function assertRunHasTrustedTool(
@@ -780,6 +823,7 @@ export async function executeCodexReview(
   const vector = Object.freeze([
     "exec",
     "--ignore-user-config",
+    "--ignore-rules",
     "--strict-config",
     "-c",
     "mcp_servers={}",
@@ -791,6 +835,7 @@ export async function executeCodexReview(
     realpathSync(request.schemaPath),
     "--cd",
     realTarget,
+    "--",
     request.prompt,
   ]);
 
@@ -809,103 +854,632 @@ export type VerificationToolName =
 
 export type VerificationProfileName = "docs-only" | "code-standard";
 
-export interface NodeVerificationRequest {
+export const VERIFIER_IMAGE_ID =
+  "sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d";
+export const VERIFIER_REPO_DIGEST =
+  "node@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d";
+export const VERIFIER_PLATFORM = "linux/arm64" as const;
+export const VERIFIER_ENGINE_OS = "linux" as const;
+export const VERIFIER_ENGINE_ARCH = "aarch64" as const;
+export const VERIFIER_NODE_VERSION = "24.18.0";
+
+export interface VerificationRuntimeEvidence {
+  readonly dockerCliVersion: string;
+  readonly dockerEngineVersion: string;
+  readonly dockerEngineOs: typeof VERIFIER_ENGINE_OS;
+  readonly dockerEngineArch: typeof VERIFIER_ENGINE_ARCH;
+  readonly imageId: typeof VERIFIER_IMAGE_ID;
+  readonly repoDigest: typeof VERIFIER_REPO_DIGEST;
+  readonly platform: typeof VERIFIER_PLATFORM;
+  readonly nodeVersion: string;
+  readonly pnpmVersion: string;
+  readonly prettierVersion: string;
+  readonly eslintVersion: string;
+  readonly typescriptVersion: string;
+  readonly vitestVersion: string;
+  readonly architectureScriptSha256: string;
+  readonly packageJsonSha256: string;
+  readonly pnpmLockSha256: string;
+  readonly pnpmWorkspaceSha256: string;
+}
+
+export type DockerVerificationExecution = AsyncExecutionResult &
+  Readonly<{ runtimeEvidence: VerificationRuntimeEvidence }>;
+
+export interface DockerVerificationRequest {
   readonly profile: VerificationProfileName;
   readonly tool: VerificationToolName;
   readonly targetDirectory: string;
+  readonly dependencySnapshotPath: string;
+  readonly pnpmRootPath: string;
+  readonly runtimeDirectory: string;
   readonly timeoutMs?: number;
   readonly maxOutputBytes?: number;
 }
 
-export async function executeNodeVerification(
+type DockerImagePayload = Readonly<{
+  Id: string;
+  RepoDigests: readonly string[];
+  Os: string;
+  Architecture: string;
+}>;
+
+function isWithinPath(parent: string, child: string): boolean {
+  const rel = relative(parent, child);
+  return (
+    rel === "" ||
+    (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel))
+  );
+}
+
+function sha256File(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function parseJsonObject(
+  output: string,
+  label: string,
+): Record<string, unknown> {
+  let value: unknown;
+  try {
+    value = JSON.parse(output.trim()) as unknown;
+  } catch {
+    fail("DOCKER_RUNTIME_MALFORMED", `${label} did not return valid JSON`);
+  }
+  if (!isRecord(value)) {
+    fail("DOCKER_RUNTIME_MALFORMED", `${label} did not return a JSON object`);
+  }
+  return value;
+}
+
+function requireStringField(
+  value: Record<string, unknown>,
+  field: string,
+  label: string,
+): string {
+  const fieldValue = value[field];
+  if (typeof fieldValue !== "string" || fieldValue.trim().length === 0) {
+    fail("DOCKER_RUNTIME_MALFORMED", `${label}.${field} is invalid`);
+  }
+  return fieldValue;
+}
+
+function inspectDockerRuntime(
+  binaryPath: string,
+  directory: string,
+): Readonly<{
+  cliVersion: string;
+  engineVersion: string;
+  engineOs: typeof VERIFIER_ENGINE_OS;
+  engineArch: typeof VERIFIER_ENGINE_ARCH;
+}> {
+  const version = runSynchronous({
+    binaryPath,
+    vector: ["version", "--format", "{{json .}}"],
+    directory,
+    variables: verificationEnvironment(),
+    timeoutMs: 30_000,
+    maxOutputBytes: 1024 * 1024,
+  });
+  if (version.error || version.status !== 0) {
+    fail(
+      "DOCKER_RUNTIME_UNAVAILABLE",
+      `Docker version inspection failed with exit code ${String(version.status)}`,
+    );
+  }
+  const root = parseJsonObject(version.stdout, "docker version");
+  const client = root.Client;
+  const server = root.Server;
+  if (!isRecord(client) || !isRecord(server)) {
+    fail(
+      "DOCKER_RUNTIME_MALFORMED",
+      "Docker version response is missing Client or Server",
+    );
+  }
+  const cliVersion = requireStringField(client, "Version", "Client");
+  const engineVersion = requireStringField(server, "Version", "Server");
+  const engineOs = requireStringField(server, "Os", "Server");
+  const engineArch = requireStringField(server, "Arch", "Server");
+  if (engineOs !== VERIFIER_ENGINE_OS || engineArch !== VERIFIER_ENGINE_ARCH) {
+    fail(
+      "DOCKER_PLATFORM_MISMATCH",
+      "Docker Engine OS or architecture does not match the pinned verifier",
+    );
+  }
+  return Object.freeze({
+    cliVersion,
+    engineVersion,
+    engineOs: VERIFIER_ENGINE_OS,
+    engineArch: VERIFIER_ENGINE_ARCH,
+  });
+}
+
+function inspectVerifierImage(
+  binaryPath: string,
+  directory: string,
+): DockerImagePayload {
+  const inspect = runSynchronous({
+    binaryPath,
+    vector: ["image", "inspect", VERIFIER_IMAGE_ID, "--format", "{{json .}}"],
+    directory,
+    variables: verificationEnvironment(),
+    timeoutMs: 30_000,
+    maxOutputBytes: 1024 * 1024,
+  });
+  if (inspect.error || inspect.status !== 0) {
+    fail(
+      "DOCKER_IMAGE_UNAVAILABLE",
+      `Pinned verifier image inspection failed with exit code ${String(
+        inspect.status,
+      )}`,
+    );
+  }
+  const image = parseJsonObject(inspect.stdout, "docker image inspect");
+  const id = requireStringField(image, "Id", "image");
+  const os = requireStringField(image, "Os", "image");
+  const architecture = requireStringField(image, "Architecture", "image");
+  const repoDigests = image.RepoDigests;
+  if (
+    id !== VERIFIER_IMAGE_ID ||
+    os !== "linux" ||
+    architecture !== "arm64" ||
+    !Array.isArray(repoDigests) ||
+    repoDigests.some((entry) => typeof entry !== "string") ||
+    !repoDigests.includes(VERIFIER_REPO_DIGEST)
+  ) {
+    fail(
+      "DOCKER_IMAGE_IDENTITY_MISMATCH",
+      "Pinned verifier image ID, digest, OS or architecture does not match",
+    );
+  }
+  return Object.freeze({
+    Id: id,
+    RepoDigests: Object.freeze([...repoDigests] as string[]),
+    Os: os,
+    Architecture: architecture,
+  });
+}
+
+function assertExternalDirectory(
+  path: string,
+  repo: RepositoryIdentity,
+  label: string,
+): string {
+  if (!isAbsolute(path) || !existsSync(path)) {
+    fail(
+      "INVALID_VERIFICATION_CONFIG",
+      `${label} must be an existing absolute path`,
+    );
+  }
+  if (lstatSync(path).isSymbolicLink()) {
+    fail("INVALID_VERIFICATION_CONFIG", `${label} must not be a symbolic link`);
+  }
+  const real = realpathSync(path);
+  if (!lstatSync(real).isDirectory()) {
+    fail("INVALID_VERIFICATION_CONFIG", `${label} must be a directory`);
+  }
+  for (const protectedRoot of [
+    repo.repositoryRealpath,
+    repo.worktreeRealpath,
+    repo.mainCloneRealpath,
+  ]) {
+    if (
+      isWithinPath(protectedRoot, real) ||
+      isWithinPath(real, protectedRoot)
+    ) {
+      fail(
+        "INVALID_VERIFICATION_CONFIG",
+        `${label} must remain disjoint from repository paths`,
+      );
+    }
+  }
+  return real;
+}
+
+function assertSafeWorkspaceTree(root: string): void {
+  const walk = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name === ".git" || entry.name === "node_modules") continue;
+      const path = join(directory, entry.name);
+      const stat = lstatSync(path);
+      if (
+        stat.isSocket() ||
+        stat.isFIFO() ||
+        stat.isCharacterDevice() ||
+        stat.isBlockDevice()
+      ) {
+        fail(
+          "UNSAFE_VERIFICATION_WORKSPACE",
+          "Workspace contains a socket, FIFO or device",
+        );
+      }
+      if (stat.isSymbolicLink()) {
+        const target = realpathSync(path);
+        if (!isWithinPath(root, target)) {
+          fail(
+            "UNSAFE_VERIFICATION_WORKSPACE",
+            "Workspace symbolic link escapes the source worktree",
+          );
+        }
+        continue;
+      }
+      if (stat.isDirectory()) walk(path);
+    }
+  };
+  walk(root);
+}
+
+function verificationCommand(
+  profile: VerificationProfileName,
+  tool: VerificationToolName,
+): readonly string[] {
+  if (profile === "docs-only") {
+    if (tool !== "prettier") {
+      fail(
+        "UNAUTHORIZED_VERIFICATION_TOOL",
+        `Tool ${tool} is not authorized for profile docs-only`,
+      );
+    }
+    return Object.freeze([
+      "node",
+      "/workspace/node_modules/prettier/bin/prettier.cjs",
+      "--check",
+      "docs",
+      "README.md",
+    ]);
+  }
+  if (profile !== "code-standard") {
+    fail(
+      "UNAUTHORIZED_VERIFICATION_PROFILE",
+      `Profile ${String(profile)} is not allowlisted`,
+    );
+  }
+  switch (tool) {
+    case "prettier":
+      return Object.freeze([
+        "node",
+        "/workspace/node_modules/prettier/bin/prettier.cjs",
+        "--check",
+        ".",
+      ]);
+    case "eslint":
+      return Object.freeze([
+        "node",
+        "/workspace/node_modules/eslint/bin/eslint.js",
+        ".",
+      ]);
+    case "architecture":
+      return Object.freeze([
+        "node",
+        "/workspace/scripts/check-architecture.mjs",
+      ]);
+    case "typescript":
+      return Object.freeze([
+        "node",
+        "/workspace/node_modules/typescript/bin/tsc",
+        "-b",
+        "--pretty",
+        "false",
+      ]);
+    case "vitest":
+      return Object.freeze([
+        "node",
+        "/workspace/node_modules/vitest/vitest.mjs",
+        "run",
+      ]);
+    default:
+      fail(
+        "UNAUTHORIZED_VERIFICATION_TOOL",
+        `Tool ${String(tool)} is not authorized for profile code-standard`,
+      );
+  }
+}
+
+export function buildDockerRunVector(input: {
+  readonly sourcePath: string;
+  readonly workspacePath: string;
+  readonly nodeModulesPath: string;
+  readonly pnpmRootPath: string;
+  readonly command: readonly string[];
+}): readonly string[] {
+  const vector = [
+    "run",
+    "--rm",
+    "--pull",
+    "never",
+    "--network",
+    "none",
+    "--read-only",
+    "--cap-drop",
+    "ALL",
+    "--security-opt",
+    "no-new-privileges:true",
+    "--pids-limit",
+    "256",
+    "--memory",
+    "4g",
+    "--cpus",
+    "2",
+    "--user",
+    "1000:1000",
+    "--platform",
+    VERIFIER_PLATFORM,
+    "--workdir",
+    "/workspace",
+    "--tmpfs",
+    "/tmp:rw,noexec,nosuid,nodev,size=256m",
+    "--tmpfs",
+    "/home/sandbox:rw,noexec,nosuid,nodev,size=64m",
+    "--env",
+    "HOME=/home/sandbox",
+    "--env",
+    "TMPDIR=/tmp",
+    "--env",
+    "XDG_CACHE_HOME=/home/sandbox/.cache",
+    "--env",
+    "CI=true",
+    "--env",
+    "PNPM_DISABLE_SELF_UPDATE_CHECK=1",
+    "--env",
+    "PATH=/usr/local/bin:/usr/bin:/bin:/opt/pnpm/bin",
+    "--volume",
+    `${input.sourcePath}:/source:ro`,
+    "--volume",
+    `${input.workspacePath}:/workspace`,
+    "--volume",
+    `${input.nodeModulesPath}:/workspace/node_modules:ro`,
+    "--volume",
+    `${input.pnpmRootPath}:/opt/pnpm:ro`,
+    VERIFIER_IMAGE_ID,
+    ...input.command,
+  ];
+  const serialized = vector.join("\n");
+  if (
+    serialized.includes("docker.sock") ||
+    serialized.includes("/.ssh") ||
+    serialized.includes("/.config") ||
+    serialized.includes(":latest")
+  ) {
+    fail(
+      "UNSAFE_DOCKER_VECTOR",
+      "Docker vector contains a forbidden host mount or mutable tag",
+    );
+  }
+  return Object.freeze(vector);
+}
+
+function runDockerProbe(input: {
+  readonly binaryPath: string;
+  readonly directory: string;
+  readonly sourcePath: string;
+  readonly workspacePath: string;
+  readonly nodeModulesPath: string;
+  readonly pnpmRootPath: string;
+  readonly command: readonly string[];
+}): string {
+  const result = runSynchronous({
+    binaryPath: input.binaryPath,
+    vector: buildDockerRunVector(input),
+    directory: input.directory,
+    variables: verificationEnvironment(),
+    timeoutMs: 60_000,
+    maxOutputBytes: 1024 * 1024,
+  });
+  if (result.error || result.status !== 0) {
+    fail(
+      "DOCKER_RUNTIME_EVIDENCE_FAILED",
+      `Docker evidence probe failed with exit code ${String(result.status)}`,
+    );
+  }
+  const output = result.stdout.trim();
+  if (output.length === 0) {
+    fail(
+      "DOCKER_RUNTIME_EVIDENCE_FAILED",
+      "Docker evidence probe returned no output",
+    );
+  }
+  return output.split(/\r?\n/u)[0] ?? "";
+}
+
+export async function executeDockerVerification(
   context: TrustedExecutionContext,
-  request: NodeVerificationRequest,
-): Promise<AsyncExecutionResult> {
-  const tool = assertTrustedExecutionContext(context, "node");
+  request: DockerVerificationRequest,
+): Promise<DockerVerificationExecution> {
+  const docker = assertTrustedExecutionContext(context, "docker");
   const run = assertRunHasTrustManifest(
     context.runId,
     context.stateStore,
   ) as TrustBoundRun;
   const repo = assertRepositoryIdentityIntegrity(run.repositoryIdentity);
+  const manifest = assertTrustManifestIntegrity(run.trustManifest);
 
   const realTarget = realpathSync(request.targetDirectory);
-  if (
-    realTarget !== repo.worktreeRealpath &&
-    realTarget !== repo.repositoryRealpath &&
-    realTarget !== repo.mainCloneRealpath
-  ) {
+  if (realTarget !== repo.worktreeRealpath) {
     fail(
       "UNAUTHORIZED_VERIFICATION_PATH",
-      "Target directory does not match any authorized location in repository identity",
+      "Verification may execute only against the authorized worktree",
     );
   }
 
-  let relativeScript: string;
-  let args: readonly string[];
-
-  if (request.profile === "docs-only") {
-    if (request.tool !== "prettier") {
-      fail(
-        "UNAUTHORIZED_VERIFICATION_TOOL",
-        `Tool ${request.tool} is not authorized for profile docs-only`,
-      );
-    }
-    relativeScript = "node_modules/prettier/bin/prettier.cjs";
-    args = ["--check", "docs", "README.md"];
-  } else if (request.profile === "code-standard") {
-    switch (request.tool) {
-      case "prettier":
-        relativeScript = "node_modules/prettier/bin/prettier.cjs";
-        args = ["--check", "."];
-        break;
-      case "eslint":
-        relativeScript = "node_modules/eslint/bin/eslint.js";
-        args = ["."];
-        break;
-      case "architecture":
-        relativeScript = "scripts/check-architecture.mjs";
-        args = [];
-        break;
-      case "typescript":
-        relativeScript = "node_modules/typescript/bin/tsc";
-        args = ["-b", "--pretty", "false"];
-        break;
-      case "vitest":
-        relativeScript = "node_modules/vitest/vitest.mjs";
-        args = ["run"];
-        break;
-      default:
-        fail(
-          "UNAUTHORIZED_VERIFICATION_TOOL",
-          `Tool ${String(request.tool)} is not authorized for profile code-standard`,
-        );
-    }
-  } else {
-    fail(
-      "UNAUTHORIZED_VERIFICATION_PROFILE",
-      `Profile ${String(request.profile)} is not allowlisted`,
-    );
-  }
-
-  const scriptPath = resolve(realTarget, relativeScript);
+  const dependencySnapshot = assertExternalDirectory(
+    request.dependencySnapshotPath,
+    repo,
+    "dependencySnapshotPath",
+  );
+  const pnpmRoot = assertExternalDirectory(
+    request.pnpmRootPath,
+    repo,
+    "pnpmRootPath",
+  );
+  const runtimeDirectory = assertExternalDirectory(
+    request.runtimeDirectory,
+    repo,
+    "runtimeDirectory",
+  );
+  const nodeModulesCandidate = join(dependencySnapshot, "node_modules");
   if (
-    !existsSync(scriptPath) ||
-    !lstatSync(realpathSync(scriptPath)).isFile()
+    !existsSync(nodeModulesCandidate) ||
+    lstatSync(nodeModulesCandidate).isSymbolicLink()
   ) {
     fail(
-      "VERIFICATION_PREFLIGHT_FAILED",
-      `Verification script is not a regular file: ${relativeScript}`,
+      "INVALID_VERIFICATION_CONFIG",
+      "dependencySnapshotPath/node_modules must exist and must not be a symlink",
     );
   }
-  const realScript = realpathSync(scriptPath);
-  const vector = Object.freeze([realScript, ...args]);
+  const nodeModulesPath = realpathSync(nodeModulesCandidate);
+  if (
+    !lstatSync(nodeModulesPath).isDirectory() ||
+    !isWithinPath(dependencySnapshot, nodeModulesPath)
+  ) {
+    fail(
+      "INVALID_VERIFICATION_CONFIG",
+      "dependencySnapshotPath must contain its own node_modules directory",
+    );
+  }
+  if (!existsSync(join(pnpmRoot, "bin", "pnpm.cjs"))) {
+    fail(
+      "INVALID_VERIFICATION_CONFIG",
+      "pnpmRootPath must contain bin/pnpm.cjs",
+    );
+  }
 
-  return await runAsynchronous({
-    binaryPath: tool.resolvedPath,
-    vector,
-    directory: realTarget,
-    variables: verificationEnvironment(),
-    timeoutMs: request.timeoutMs ?? 180_000,
-    maxOutputBytes: request.maxOutputBytes ?? 10 * 1024 * 1024,
-  });
+  const packageJsonSha256 = sha256File(join(realTarget, "package.json"));
+  const pnpmLockSha256 = sha256File(join(realTarget, "pnpm-lock.yaml"));
+  const pnpmWorkspaceSha256 = sha256File(
+    join(realTarget, "pnpm-workspace.yaml"),
+  );
+  if (
+    packageJsonSha256 !== manifest.packageManifestHash ||
+    pnpmLockSha256 !== manifest.lockfileHash ||
+    pnpmWorkspaceSha256 !== manifest.workspaceManifestHash
+  ) {
+    fail(
+      "VERIFICATION_MANIFEST_MISMATCH",
+      "Workspace manifests do not match the immutable Trust Manifest",
+    );
+  }
+
+  assertSafeWorkspaceTree(realTarget);
+  const temporaryRoot = mkdtempSync(join(runtimeDirectory, "verification-"));
+  const workspacePath = join(temporaryRoot, "workspace");
+
+  try {
+    cpSync(realTarget, workspacePath, {
+      recursive: true,
+      dereference: false,
+      filter: (source) => {
+        const rel = relative(realTarget, source);
+        const first = rel.split(sep)[0];
+        return first !== ".git" && first !== "node_modules";
+      },
+    });
+
+    const dockerVersion = inspectDockerRuntime(docker.resolvedPath, realTarget);
+    inspectVerifierImage(docker.resolvedPath, realTarget);
+
+    const probeBase = {
+      binaryPath: docker.resolvedPath,
+      directory: realTarget,
+      sourcePath: realTarget,
+      workspacePath,
+      nodeModulesPath,
+      pnpmRootPath: pnpmRoot,
+    } as const;
+
+    const nodeVersion = runDockerProbe({
+      ...probeBase,
+      command: ["node", "--version"],
+    }).replace(/^v/u, "");
+    const pnpmVersion = runDockerProbe({
+      ...probeBase,
+      command: ["node", "/opt/pnpm/bin/pnpm.cjs", "--version"],
+    });
+    const prettierVersion = runDockerProbe({
+      ...probeBase,
+      command: [
+        "node",
+        "/workspace/node_modules/prettier/bin/prettier.cjs",
+        "--version",
+      ],
+    });
+    const eslintVersion = runDockerProbe({
+      ...probeBase,
+      command: [
+        "node",
+        "/workspace/node_modules/eslint/bin/eslint.js",
+        "--version",
+      ],
+    }).replace(/^v/u, "");
+    const typescriptVersion = runDockerProbe({
+      ...probeBase,
+      command: [
+        "node",
+        "/workspace/node_modules/typescript/bin/tsc",
+        "--version",
+      ],
+    }).replace(/^Version\s+/u, "");
+    const vitestVersion = runDockerProbe({
+      ...probeBase,
+      command: [
+        "node",
+        "/workspace/node_modules/vitest/vitest.mjs",
+        "--version",
+      ],
+    });
+
+    if (
+      nodeVersion !== VERIFIER_NODE_VERSION ||
+      pnpmVersion !== "11.7.0" ||
+      prettierVersion !== "3.9.5" ||
+      eslintVersion !== "9.39.4" ||
+      typescriptVersion !== "5.9.3" ||
+      !vitestVersion.startsWith("vitest/4.1.10")
+    ) {
+      fail(
+        "VERIFICATION_TOOL_VERSION_MISMATCH",
+        "Sandbox tool versions do not match the pinned verifier",
+      );
+    }
+
+    const runtimeEvidence: VerificationRuntimeEvidence = Object.freeze({
+      dockerCliVersion: dockerVersion.cliVersion,
+      dockerEngineVersion: dockerVersion.engineVersion,
+      dockerEngineOs: dockerVersion.engineOs,
+      dockerEngineArch: dockerVersion.engineArch,
+      imageId: VERIFIER_IMAGE_ID,
+      repoDigest: VERIFIER_REPO_DIGEST,
+      platform: VERIFIER_PLATFORM,
+      nodeVersion,
+      pnpmVersion,
+      prettierVersion,
+      eslintVersion,
+      typescriptVersion,
+      vitestVersion,
+      architectureScriptSha256: sha256File(
+        join(workspacePath, "scripts", "check-architecture.mjs"),
+      ),
+      packageJsonSha256,
+      pnpmLockSha256,
+      pnpmWorkspaceSha256,
+    });
+
+    const execution = await runAsynchronous({
+      binaryPath: docker.resolvedPath,
+      vector: buildDockerRunVector({
+        sourcePath: realTarget,
+        workspacePath,
+        nodeModulesPath,
+        pnpmRootPath: pnpmRoot,
+        command: verificationCommand(request.profile, request.tool),
+      }),
+      directory: realTarget,
+      variables: verificationEnvironment(),
+      timeoutMs: request.timeoutMs ?? 180_000,
+      maxOutputBytes: request.maxOutputBytes ?? 10 * 1024 * 1024,
+    });
+
+    return Object.freeze({ ...execution, runtimeEvidence });
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
 }

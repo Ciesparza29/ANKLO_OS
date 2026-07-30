@@ -373,7 +373,7 @@ export class Phase165Service {
           success: result.success,
           command_count: result.results.length,
           retries: result.retries,
-          tool_versions: result.toolVersions,
+          runtime_evidence: result.runtimeEvidence,
         },
         now: input.now,
       });
