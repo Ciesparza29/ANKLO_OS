@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ObservedApproval } from "../src/approvals.ts";
 import {
+  createNodeToolIdentity,
   createRepositoryIdentity,
   type RepositoryIdentity,
 } from "../src/operational-trust.ts";
@@ -744,16 +745,7 @@ describe("SQLite state store", () => {
           runId,
           trustManifest: createTrustManifest({
             createdAt: "2026-07-27T09:00:00.000Z",
-            toolIdentities: [
-              {
-                name: "node",
-                resolvedPath: process.execPath,
-                realpath: process.execPath,
-                sha256:
-                  "ee6fb0e015284d83a91e8ec5213f43a157f8a392b58555301682892ba928c04a",
-                version: "24.18.0",
-              },
-            ],
+            toolIdentities: [createNodeToolIdentity()],
             repositoryIdentity,
             lockfileHash: "4".repeat(64),
             workspaceManifestHash: "5".repeat(64),
@@ -839,16 +831,7 @@ describe("SQLite state store", () => {
       runId: "run-trust",
       repositoryIdentityHash: repositoryIdentity.repositoryIdentityHash,
       repositoryIdentity,
-      toolIdentities: [
-        {
-          name: "node",
-          resolvedPath: process.execPath,
-          realpath: process.execPath,
-          sha256:
-            "ee6fb0e015284d83a91e8ec5213f43a157f8a392b58555301682892ba928c04a",
-          version: "24.18.0",
-        },
-      ],
+      toolIdentities: [createNodeToolIdentity()],
       lockfileHash: "4".repeat(64),
       workspaceManifestHash: "5".repeat(64),
       analyzerVersion: "1.0.0",

@@ -308,7 +308,7 @@ function manifestPayload(seed: TrustManifestSeed): Readonly<{
   assertSha256("common git dir identity", seed.commonGitDirIdentity);
 
   const normalizedTools = [...seed.toolIdentities]
-    .map(assertToolIdentityIntegrity)
+    .map(normalizeToolIdentity)
     .sort((left, right) => left.name.localeCompare(right.name));
 
   const names = new Set(normalizedTools.map((tool) => tool.name));
@@ -415,7 +415,10 @@ export function createNodeToolIdentity(): ToolIdentity {
 }
 
 export function createTrustManifest(seed: TrustManifestSeed): TrustManifest {
-  const payload = manifestPayload(seed);
+  const payload = manifestPayload({
+    ...seed,
+    toolIdentities: seed.toolIdentities.map(assertToolIdentityIntegrity),
+  });
 
   return Object.freeze({
     ...payload,
