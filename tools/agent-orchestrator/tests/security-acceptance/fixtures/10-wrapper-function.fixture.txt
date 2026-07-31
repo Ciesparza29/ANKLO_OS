@@ -1,0 +1,7 @@
+import { spawn } from "node:child_process";
+
+function execute(command: string): void {
+  spawn(command, []);
+}
+
+execute("echo");

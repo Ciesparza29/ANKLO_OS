@@ -1,0 +1,6 @@
+import { createRequire } from "node:module";
+
+const loadModule = createRequire(import.meta.url);
+const childProcess = loadModule("node:child_process");
+
+childProcess.spawn("echo", ["blocked"]);

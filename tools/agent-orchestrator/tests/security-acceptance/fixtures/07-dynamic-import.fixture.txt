@@ -1,0 +1,3 @@
+const childProcessPromise = import("node:child_process");
+
+void childProcessPromise;

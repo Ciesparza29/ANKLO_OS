@@ -1,0 +1,4 @@
+const moduleName = "node:child_process";
+const childProcess = require(moduleName);
+
+childProcess.spawn("echo", ["blocked"]);

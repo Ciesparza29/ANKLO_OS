@@ -1,0 +1,3 @@
+import { spawn as executeProcess } from "node:child_process";
+
+executeProcess("echo", ["blocked"]);
