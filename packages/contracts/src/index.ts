@@ -27,6 +27,9 @@ export const CUT_REQUEST_CAPABILITIES = [
   "cut_request:submit",
   "cut_request:cancel",
 ] as const;
+
+export const PRODUCT_CAPABILITIES = ["product:create", "product:read"] as const;
+
 export const CUT_REQUEST_HISTORY_ACTIONS = [
   "CUT_REQUEST_CREATED",
   "CUT_REQUEST_SUBMITTED",
@@ -36,6 +39,7 @@ export const CUT_REQUEST_HISTORY_ACTIONS = [
 export const cutRequestStatusSchema = z.enum(CUT_REQUEST_STATUSES);
 export const cutExecutionModeSchema = z.enum(CUT_EXECUTION_MODES);
 export const cutRequestCapabilitySchema = z.enum(CUT_REQUEST_CAPABILITIES);
+export const productCapabilitySchema = z.enum(PRODUCT_CAPABILITIES);
 export const cutRequestHistoryActionSchema = z.enum(
   CUT_REQUEST_HISTORY_ACTIONS,
 );
@@ -155,9 +159,28 @@ export const cutRequestHistoryResponseSchema = z
   .object({ history: z.array(cutRequestHistoryEntrySchema) })
   .strict();
 
+export const createProductSchema = z
+  .object({
+    name: requiredText(200),
+    description: optionalText(1000),
+    sku: optionalText(120),
+    externalCode: optionalText(120),
+    categoryId: z.string().uuid().optional(),
+    baseUnitId: z.string().uuid().optional(),
+    category: optionalText(100),
+    manufacturer: optionalText(100),
+    baseUnit: optionalText(32),
+  })
+  .strict();
+
+export const productListQuerySchema = z
+  .object({ isActive: z.boolean().optional() })
+  .strict();
+
 export type CutRequestStatus = z.infer<typeof cutRequestStatusSchema>;
 export type CutExecutionMode = z.infer<typeof cutExecutionModeSchema>;
 export type CutRequestCapability = z.infer<typeof cutRequestCapabilitySchema>;
+export type ProductCapability = z.infer<typeof productCapabilitySchema>;
 export type CutRequestHistoryAction = z.infer<
   typeof cutRequestHistoryActionSchema
 >;
@@ -204,4 +227,110 @@ export interface CutRequestDto {
   readonly updatedAt: string;
   readonly createdBy: string;
   readonly lines: readonly CutRequestLineDto[];
+}
+
+export type CreateProductInput = z.infer<typeof createProductSchema>;
+export type ProductListQuery = z.infer<typeof productListQuerySchema>;
+
+export interface ProductDto {
+  readonly id: string;
+  readonly organizationId: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly sku?: string;
+  readonly externalCode?: string;
+  readonly categoryId?: string;
+  readonly baseUnitId?: string;
+  readonly category?: string;
+  readonly manufacturer?: string;
+  readonly baseUnit?: string;
+  readonly isActive: boolean;
+  readonly templateId?: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly createdBy: string;
+}
+
+export const productCategoryDtoSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  name: z.string(),
+  code: z.string().optional(),
+  isActive: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type ProductCategoryDto = z.infer<typeof productCategoryDtoSchema>;
+
+export const unitOfMeasureDtoSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  name: z.string(),
+  symbol: z.string(),
+  isActive: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export type UnitOfMeasureDto = z.infer<typeof unitOfMeasureDtoSchema>;
+
+export const productTemplateSchema = z.object({
+  id: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  name: z.string(),
+  description: z.string().nullable(),
+  categoryId: z.string().uuid().nullable(),
+  baseUnitId: z.string().uuid().nullable(),
+  isActive: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  createdBy: z.string().uuid(),
+});
+
+export type ProductTemplateDto = z.infer<typeof productTemplateSchema>;
+
+export const createProductTemplateSchema = z
+  .object({
+    name: requiredText(200),
+    description: optionalText(1000),
+    categoryId: z.string().uuid().optional(),
+    baseUnitId: z.string().uuid().optional(),
+  })
+  .strict();
+
+export const createProductCategorySchema = z
+  .object({
+    name: requiredText(100),
+    code: optionalText(32),
+  })
+  .strict();
+
+export type CreateProductCategoryInput = z.infer<
+  typeof createProductCategorySchema
+>;
+
+export const createUnitOfMeasureSchema = z
+  .object({
+    name: requiredText(100),
+    symbol: requiredText(32),
+  })
+  .strict();
+
+export type CreateUnitOfMeasureInput = z.infer<
+  typeof createUnitOfMeasureSchema
+>;
+
+export const updateCatalogStateSchema = z
+  .object({
+    isActive: z.boolean(),
+  })
+  .strict();
+
+export type UpdateCatalogStateInput = z.infer<typeof updateCatalogStateSchema>;
+
+/** Read-model compuesto para detalle de producto — solo lectura. */
+export interface ProductDetailResponse {
+  readonly product: ProductDto;
+  readonly template: ProductTemplateDto | null;
 }

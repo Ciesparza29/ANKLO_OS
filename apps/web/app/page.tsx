@@ -8,6 +8,13 @@ export default function Home() {
         <a className="button" href="/cut-requests">
           Abrir solicitudes de corte
         </a>
+        <a
+          className="button secondary"
+          href="/products"
+          style={{ marginLeft: "1rem" }}
+        >
+          Catálogo de Productos
+        </a>
       </p>
       <aside>
         Esta entrega registra solicitudes. No planifica, reserva ni mueve
