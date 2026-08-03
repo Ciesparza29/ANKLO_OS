@@ -10,6 +10,10 @@ import {
   type RepositoryIdentity,
 } from "../src/operational-trust.ts";
 import { SqliteStateStore } from "../src/state-store.ts";
+import {
+  computeAuthorizedFilesHash,
+  createWorkPackage,
+} from "../src/work-package.ts";
 import { createTrustManifest } from "../src/operational-trust.ts";
 
 const tempDirs: string[] = [];
@@ -248,6 +252,90 @@ afterEach(() => {
 });
 
 describe("SQLite state store", () => {
+  it("preserves the real PLAN_APPROVED timestamp through work package and StateStore binding", () => {
+    const { store } = createStore();
+    const runId = "issue-27-timestamp-regression";
+    const observedApproval = {
+      ...planApproval(27, "2027", "2127"),
+      approval_comment_id: 5_170_765_755,
+      approval_comment_created_at: "2026-08-03T19:23:43Z",
+      approval_comment_updated_at: "2026-08-03T19:23:43Z",
+    };
+
+    createRun(store, runId, 27);
+    store.transitionRun({
+      runId,
+      to: "PLAN_READY",
+      reason: "timestamp regression plan ready",
+      correlationId: runId,
+      now: new Date("2026-08-03T19:23:44Z"),
+    });
+    store.recordApprovalEffect({
+      observedApproval,
+      effect: "PLAN_APPROVED",
+      runId,
+      observedAt: new Date("2026-08-03T19:23:45Z"),
+    });
+    store.transitionRun({
+      runId,
+      to: "PLAN_APPROVED",
+      reason: "timestamp regression approval validated",
+      correlationId: runId,
+      now: new Date("2026-08-03T19:23:46Z"),
+    });
+
+    const authorizedFiles = [
+      "tools/agent-orchestrator/src/work-package.ts",
+    ] as const;
+    const pkg = createWorkPackage({
+      schemaVersion: "1.0",
+      canonicalizationVersion: "1.0",
+      repository: "Ciesparza29/ANKLO_OS",
+      issueNumber: 27,
+      runId,
+      idempotencyKey: "0".repeat(64),
+      issueBodyHash: "3".repeat(64),
+      sourceSnapshotHash: "2".repeat(64),
+      planHash: "1".repeat(64),
+      baseBranch: "main",
+      baseSha: "7".repeat(40),
+      targetBranch: "fix/27-approval-timestamp-canonicalization",
+      targetHeadSha: "7".repeat(40),
+      targetWorktreeId: "worktree-27-timestamp-regression",
+      worktreePath: "/tmp/anklo-worktree-27-timestamp-regression",
+      authorizedFiles,
+      prohibitedFiles: ["prisma/schema.prisma"],
+      authorizedFilesHash: computeAuthorizedFilesHash(authorizedFiles),
+      fixedProfiles: ["code-standard"],
+      requiredSkills: ["anklo-handoff"],
+      acceptanceCriteria: ["Timestamp binding is preserved exactly"],
+      planApprovalBinding: {
+        approvalEventId: String(observedApproval.body.approval_event_id),
+        approvalCommentId: observedApproval.approval_comment_id,
+        approvalAuthorLogin: observedApproval.approval_author_login,
+        approvalCommentUpdatedAt: observedApproval.approval_comment_updated_at,
+        expiresAt: String(observedApproval.body.expires_at),
+        baseSha: String(observedApproval.body.base_sha),
+        planHash: String(observedApproval.body.plan_hash),
+        sourceSnapshotHash: String(observedApproval.body.source_snapshot_hash),
+      },
+      createdAt: "2026-08-03T19:24:00Z",
+    });
+
+    expect(pkg.planApprovalBinding.approvalCommentUpdatedAt).toBe(
+      "2026-08-03T19:23:43Z",
+    );
+    expect(() =>
+      store.assertPlanApprovalBinding({
+        runId,
+        binding: pkg.planApprovalBinding,
+        now: new Date("2026-08-03T19:24:00Z"),
+      }),
+    ).not.toThrow();
+
+    store.close();
+  });
+
   it("verifies schema version, WAL, foreign keys, timeout and integrity", () => {
     const { store } = createStore();
     expect(store.runtimeDiagnostics()).toEqual({
