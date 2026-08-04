@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import {
@@ -29,6 +30,7 @@ import {
 } from "./orchestrator.ts";
 import { assertCapability, DENIED_CAPABILITIES } from "./policy.ts";
 import { isRunState } from "./state-machine.ts";
+import { runPilotPreflight, type PreflightInput } from "./pilot-preflight.ts";
 
 const COMMANDS = [
   "diagnose",
@@ -46,6 +48,7 @@ const COMMANDS = [
   "lease:recover",
   "approval:validate",
   "safety:activate",
+  "pilot:preflight",
 ] as const;
 type Command = (typeof COMMANDS)[number];
 
@@ -164,6 +167,14 @@ export async function runCli(
         "authorized-files-hash": { type: "string" },
         "package-hash": { type: "string" },
         scope: { type: "string" },
+        "issue-body": { type: "string" },
+        "issue-body-sha256": { type: "string" },
+        "head-sha": { type: "string" },
+        "current-branch": { type: "string" },
+        "worktree-clean": { type: "boolean", default: false },
+        "index-clean": { type: "boolean", default: false },
+        "ready-to-dispatch-exists": { type: "boolean", default: false },
+        "ready-to-dispatch-untracked": { type: "boolean", default: false },
       },
     });
 
@@ -415,6 +426,16 @@ export async function runCli(
 
     if (command === "run:bind-target") {
       assertCapability(config.allowedCapabilities, "STATE_WRITE");
+      // Reject --apply before touching StateStore: run:bind-target never
+      // opens or mutates the state database when --apply is supplied without
+      // a fully-structured plan-approval binding provided through the normal
+      // approval:validate pathway.
+      if (apply) {
+        throw new OrchestratorError(
+          "APPLY_NOT_SUPPORTED",
+          "run:bind-target --apply is rejected: use approval:validate to record a plan approval binding before binding the implementation target",
+        );
+      }
       const runId = requireString(parsed.values["run-id"], "run-id");
       const targetRepository = requireString(
         parsed.values["target-repository"],
@@ -447,53 +468,22 @@ export async function runCli(
         requireString(parsed.values["package-hash"], "package-hash"),
         "package-hash",
       );
-      if (!apply) {
-        writeSuccess({
-          command,
-          dryRun: true,
-          format,
-          data: {
-            run_id: runId,
-            target_repository: targetRepository,
-            target_remote: targetRemote,
-            target_branch: targetBranch,
-            target_head_sha: targetHeadSha,
-            worktree_id: worktreeId,
-            authorized_files_hash: authorizedFilesHash,
-            package_hash: packageHash,
-            effects_executed: 0,
-          },
-        });
-        return 0;
-      }
-      const store = openStateStore(config, parsed.values["state-db"]);
-      try {
-        const run = store.bindImplementationTarget({
-          runId,
-          targetRepository,
-          targetRemote,
-          targetBranch,
-          targetHeadSha,
-          worktreeId,
-          authorizedFilesHash,
-          packageHash,
-          planApprovalBinding: {
-            approvalEventId: "manual-bind",
-            approvalCommentId: 0,
-            approvalAuthorLogin: "cli",
-            approvalCommentUpdatedAt: new Date().toISOString(),
-            expiresAt: new Date(Date.now() + 86400000).toISOString(),
-            baseSha: "base",
-            planHash: "plan",
-            sourceSnapshotHash: "snap",
-          },
-          correlationId: runId,
-          now: new Date(),
-        });
-        writeSuccess({ command, dryRun: false, format, data: { run } });
-      } finally {
-        store.close();
-      }
+      writeSuccess({
+        command,
+        dryRun: true,
+        format,
+        data: {
+          run_id: runId,
+          target_repository: targetRepository,
+          target_remote: targetRemote,
+          target_branch: targetBranch,
+          target_head_sha: targetHeadSha,
+          worktree_id: worktreeId,
+          authorized_files_hash: authorizedFilesHash,
+          package_hash: packageHash,
+          effects_executed: 0,
+        },
+      });
       return 0;
     }
 
@@ -753,6 +743,82 @@ export async function runCli(
       } finally {
         store.close();
       }
+      return 0;
+    }
+
+    if (command === "pilot:preflight") {
+      assertCapability(config.allowedCapabilities, "DIAGNOSE");
+      if (apply) {
+        throw new OrchestratorError(
+          "APPLY_NOT_SUPPORTED",
+          "pilot:preflight is diagnostic-only and never executes effects",
+        );
+      }
+      const repoRoot = cwd;
+      const issueBodyArg = parsed.values["issue-body"];
+      const issueBody: string = issueBodyArg
+        ? issueBodyArg
+        : (() => {
+            // Attempt to read a local ISSUE_27_BODY file as a convenience;
+            // this is a read-only probe, no side effects.
+            const localPath = `${repoRoot}/ISSUE_27_BODY`;
+            if (existsSync(localPath) && statSync(localPath).isFile()) {
+              return readFileSync(localPath, "utf8");
+            }
+            return "";
+          })();
+
+      const preflightInput: PreflightInput = {
+        repoRoot,
+        issueBody,
+        ...(parsed.values["issue-body-sha256"] === undefined
+          ? {}
+          : { expectedIssueBodySha256: parsed.values["issue-body-sha256"] }),
+        ...(parsed.values["base-sha"] === undefined
+          ? {}
+          : { expectedBaseSha: parsed.values["base-sha"] }),
+        ...(process.env.ANKLO_ORCHESTRATOR_KILL_SWITCH === undefined
+          ? {}
+          : { killSwitchEnv: process.env.ANKLO_ORCHESTRATOR_KILL_SWITCH }),
+        readyToDispatchExists: parsed.values["ready-to-dispatch-exists"],
+        ...(parsed.values["ready-to-dispatch-untracked"] === undefined
+          ? {}
+          : {
+              readyToDispatchUntracked:
+                parsed.values["ready-to-dispatch-untracked"],
+            }),
+        ...(parsed.values["current-branch"] === undefined
+          ? {}
+          : { currentBranch: parsed.values["current-branch"] }),
+        ...(parsed.values["head-sha"] === undefined
+          ? {}
+          : { headSha: parsed.values["head-sha"] }),
+        ...(parsed.values["worktree-clean"] === undefined
+          ? {}
+          : { worktreeClean: parsed.values["worktree-clean"] }),
+        ...(parsed.values["index-clean"] === undefined
+          ? {}
+          : { indexClean: parsed.values["index-clean"] }),
+      };
+
+      const report = runPilotPreflight(preflightInput, false);
+
+      writeSuccess({
+        command,
+        dryRun: true,
+        format,
+        data: {
+          schema_version: report.schemaVersion,
+          issue_number: report.issueNumber,
+          repository: report.repository,
+          base_sha: report.baseSha,
+          branch: report.branch,
+          issue_body_sha256: report.issueBodySha256,
+          checks: report.checks,
+          passed: report.passed,
+          effects_executed: report.effectsExecuted,
+        },
+      });
       return 0;
     }
 
