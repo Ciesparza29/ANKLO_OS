@@ -54,19 +54,7 @@ describe("orchestrator CLI", () => {
   });
 
   it("pilot:preflight runs in dry-run mode and executes zero effects", () => {
-    const result = run([
-      "pilot:preflight",
-      "--format",
-      "json",
-      "--issue-body",
-      "test body",
-      "--current-branch",
-      "main",
-      "--head-sha",
-      "633c98c6effd7523a623c6e3a180e9dc06b877cf",
-      "--worktree-clean",
-      "--index-clean",
-    ]);
+    const result = run(["pilot:preflight", "--format", "json"]);
     expect(result.status).toBe(0);
     const output = JSON.parse(result.stdout) as {
       result: string;
@@ -89,16 +77,39 @@ describe("orchestrator CLI", () => {
   });
 
   it("pilot:preflight rejects --apply before executing any effect", () => {
-    const result = run([
-      "pilot:preflight",
-      "--apply",
-      "--format",
-      "json",
-      "--issue-body",
-      "test body",
-    ]);
+    const result = run(["pilot:preflight", "--apply", "--format", "json"]);
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain("APPLY_NOT_SUPPORTED");
+  });
+
+  it.each([
+    ["--issue-body", "test-body"],
+    [
+      "--issue-body-sha256",
+      "a377072c738955d9582cd0cc84f716a6082cf0f0c8ad42c0f27d75f1d5a899e8",
+    ],
+    ["--head-sha", "633c98c6effd7523a623c6e3a180e9dc06b877cf"],
+    ["--current-branch", "main"],
+    ["--worktree-clean"],
+    ["--index-clean"],
+    ["--ready-to-dispatch-exists"],
+    ["--ready-to-dispatch-untracked"],
+  ])("pilot:preflight rejects obsolete flag %s", (...args: string[]) => {
+    const result = run(["pilot:preflight", ...args]);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain("Unknown option");
+  });
+
+  it("pilot:preflight rejects --state-db with INVALID_ARGUMENT", () => {
+    const result = run([
+      "pilot:preflight",
+      "--format",
+      "json",
+      "--state-db",
+      "/tmp/operator-controlled.sqlite",
+    ]);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain("INVALID_ARGUMENT");
   });
 
   it("run:bind-target dry-run is diagnostic only and executes zero effects", () => {
@@ -113,7 +124,7 @@ describe("orchestrator CLI", () => {
       "--target-remote",
       "origin",
       "--target-branch",
-      "feat/27-supervised-pilot-v7",
+      "feat/27-supervised-pilot-v11",
       "--target-head-sha",
       "633c98c6effd7523a623c6e3a180e9dc06b877cf",
       "--worktree-id",
@@ -145,7 +156,7 @@ describe("orchestrator CLI", () => {
       "--target-remote",
       "origin",
       "--target-branch",
-      "feat/27-supervised-pilot-v7",
+      "feat/27-supervised-pilot-v11",
       "--target-head-sha",
       "633c98c6effd7523a623c6e3a180e9dc06b877cf",
       "--worktree-id",

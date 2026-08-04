@@ -765,6 +765,152 @@ export function executeGitHubRead(
   return result.stdout;
 }
 
+export type BootstrapGitQueryOperation =
+  | "show-toplevel"
+  | "get-remote-origin"
+  | "show-current-branch"
+  | "rev-parse-head"
+  | "status-porcelain"
+  | "ls-files-stage"
+  | "ls-files-others"
+  | "ready-to-dispatch-in-head";
+
+export function executeBootstrapGitQuery(
+  repositoryRoot: string,
+  operation: BootstrapGitQueryOperation,
+): string {
+  const resolvedGit = resolveTrustedBinary("git");
+  let vector: readonly string[];
+
+  switch (operation) {
+    case "show-toplevel":
+      vector = [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "rev-parse",
+        "--show-toplevel",
+      ];
+      break;
+    case "get-remote-origin":
+      vector = [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "remote",
+        "get-url",
+        "origin",
+      ];
+      break;
+    case "show-current-branch":
+      vector = ["-c", "core.hooksPath=/dev/null", "branch", "--show-current"];
+      break;
+    case "rev-parse-head":
+      vector = ["-c", "core.hooksPath=/dev/null", "rev-parse", "HEAD"];
+      break;
+    case "status-porcelain":
+      vector = [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+      ];
+      break;
+    case "ls-files-stage":
+      vector = ["-c", "core.hooksPath=/dev/null", "ls-files", "--stage"];
+      break;
+    case "ls-files-others":
+      vector = [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+      ];
+      break;
+    case "ready-to-dispatch-in-head":
+      vector = [
+        "-c",
+        "core.hooksPath=/dev/null",
+        "ls-tree",
+        "HEAD",
+        "--",
+        "READY_TO_DISPATCH",
+      ];
+      break;
+    default:
+      fail(
+        "UNAUTHORIZED_GIT_OPERATION",
+        `Bootstrap Git operation not allowlisted: ${String(operation)}`,
+      );
+  }
+
+  const result = runSynchronous({
+    binaryPath: resolvedGit,
+    vector,
+    directory: repositoryRoot,
+    variables: gitEnvironment(),
+    timeoutMs: 60_000,
+    maxOutputBytes: 10 * 1024 * 1024,
+  });
+
+  if (result.error) {
+    fail(
+      "GIT_COMMAND_FAILED",
+      `Bootstrap Git command could not complete: ${result.error.message}`,
+    );
+  }
+  if (result.status !== 0 && operation !== "ready-to-dispatch-in-head") {
+    fail(
+      "GIT_COMMAND_FAILED",
+      `Bootstrap Git ${operation} failed with exit code ${String(result.status)}`,
+    );
+  }
+
+  return result.stdout;
+}
+
+export function executeBootstrapGitHubRead(configDirectory: string): string {
+  const resolvedGh = resolveTrustedBinary("gh");
+  const cfgDir =
+    configDirectory && isAbsolute(configDirectory)
+      ? realpathSync(configDirectory)
+      : "/nonexistent";
+
+  const vector = [
+    "issue",
+    "view",
+    "27",
+    "--repo",
+    "Ciesparza29/ANKLO_OS",
+    "--json",
+    "number,title,body,state",
+  ];
+
+  const result = runSynchronous({
+    binaryPath: resolvedGh,
+    vector,
+    directory: cfgDir,
+    variables: githubEnvironment(cfgDir),
+    timeoutMs: 30_000,
+    maxOutputBytes: 2 * 1024 * 1024,
+  });
+
+  if (result.error) {
+    fail(
+      "GITHUB_READ_FAILED",
+      `Bootstrap GitHub read could not complete: ${result.error.message}`,
+    );
+  }
+  if (result.status !== 0) {
+    fail(
+      "GITHUB_READ_FAILED",
+      `Bootstrap GitHub read failed with exit code ${String(result.status)}`,
+    );
+  }
+
+  return result.stdout;
+}
+
 export interface CodexReviewRequest {
   readonly schemaPath: string;
   readonly prompt: string;

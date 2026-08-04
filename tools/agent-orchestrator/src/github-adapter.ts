@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  executeBootstrapGitHubRead,
   executeGitHubRead,
   type TrustedExecutionContext,
 } from "./trusted-process.ts";
@@ -67,6 +68,35 @@ function stringField(record: Record<string, unknown>, field: string): string {
     fail("MALFORMED_GITHUB_OUTPUT", `${field} must be a string`);
   }
   return value;
+}
+
+export function bootstrapIssue27View(configDirectory: string): GitHubIssue {
+  const output = executeBootstrapGitHubRead(configDirectory);
+  const parsed = JSON.parse(output) as unknown;
+
+  if (!isRecord(parsed)) {
+    fail("MALFORMED_GITHUB_OUTPUT", "Issue output must be an object");
+  }
+  exactKeys(parsed, ["number", "title", "body", "state"], "issue");
+
+  if (parsed.number !== 27) {
+    fail(
+      "GITHUB_RESOURCE_MISMATCH",
+      "GitHub returned a different issue number",
+    );
+  }
+
+  const state = stringField(parsed, "state");
+  if (state !== "OPEN") {
+    fail("MALFORMED_GITHUB_OUTPUT", "Issue state must be OPEN");
+  }
+
+  return Object.freeze({
+    number: parsed.number,
+    title: stringField(parsed, "title"),
+    body: stringField(parsed, "body"),
+    state: "OPEN",
+  });
 }
 
 export class GitHubReadOnlyAdapter {

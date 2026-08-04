@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { existsSync, readFileSync, statSync } from "node:fs";
+
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import {
@@ -167,14 +167,6 @@ export async function runCli(
         "authorized-files-hash": { type: "string" },
         "package-hash": { type: "string" },
         scope: { type: "string" },
-        "issue-body": { type: "string" },
-        "issue-body-sha256": { type: "string" },
-        "head-sha": { type: "string" },
-        "current-branch": { type: "string" },
-        "worktree-clean": { type: "boolean", default: false },
-        "index-clean": { type: "boolean", default: false },
-        "ready-to-dispatch-exists": { type: "boolean", default: false },
-        "ready-to-dispatch-untracked": { type: "boolean", default: false },
       },
     });
 
@@ -192,6 +184,16 @@ export async function runCli(
       );
     }
     format = parsed.values.format;
+
+    if (
+      command === "pilot:preflight" &&
+      parsed.values["state-db"] !== undefined
+    ) {
+      throw new OrchestratorError(
+        "INVALID_ARGUMENT",
+        "pilot:preflight does not accept --state-db; the canonical configured StateStore path is mandatory",
+      );
+    }
 
     const cwd = context.cwd ?? process.cwd();
     const config = await loadConfig(parsed.values.config, cwd);
@@ -755,53 +757,17 @@ export async function runCli(
         );
       }
       const repoRoot = cwd;
-      const issueBodyArg = parsed.values["issue-body"];
-      const issueBody: string = issueBodyArg
-        ? issueBodyArg
-        : (() => {
-            // Attempt to read a local ISSUE_27_BODY file as a convenience;
-            // this is a read-only probe, no side effects.
-            const localPath = `${repoRoot}/ISSUE_27_BODY`;
-            if (existsSync(localPath) && statSync(localPath).isFile()) {
-              return readFileSync(localPath, "utf8");
-            }
-            return "";
-          })();
+      const ghConfigDirectory = process.env.GH_CONFIG_DIR ?? "/nonexistent";
+      const databasePath = resolveStateDatabasePath(config, undefined);
 
       const preflightInput: PreflightInput = {
         repoRoot,
-        issueBody,
-        ...(parsed.values["issue-body-sha256"] === undefined
-          ? {}
-          : { expectedIssueBodySha256: parsed.values["issue-body-sha256"] }),
-        ...(parsed.values["base-sha"] === undefined
-          ? {}
-          : { expectedBaseSha: parsed.values["base-sha"] }),
-        ...(process.env.ANKLO_ORCHESTRATOR_KILL_SWITCH === undefined
-          ? {}
-          : { killSwitchEnv: process.env.ANKLO_ORCHESTRATOR_KILL_SWITCH }),
-        readyToDispatchExists: parsed.values["ready-to-dispatch-exists"],
-        ...(parsed.values["ready-to-dispatch-untracked"] === undefined
-          ? {}
-          : {
-              readyToDispatchUntracked:
-                parsed.values["ready-to-dispatch-untracked"],
-            }),
-        ...(parsed.values["current-branch"] === undefined
-          ? {}
-          : { currentBranch: parsed.values["current-branch"] }),
-        ...(parsed.values["head-sha"] === undefined
-          ? {}
-          : { headSha: parsed.values["head-sha"] }),
-        ...(parsed.values["worktree-clean"] === undefined
-          ? {}
-          : { worktreeClean: parsed.values["worktree-clean"] }),
-        ...(parsed.values["index-clean"] === undefined
-          ? {}
-          : { indexClean: parsed.values["index-clean"] }),
+        ghConfigDirectory,
+        databasePath,
+        allowedCapabilities: config.allowedCapabilities,
       };
 
-      const report = runPilotPreflight(preflightInput, false);
+      const report = await runPilotPreflight(preflightInput, false);
 
       writeSuccess({
         command,

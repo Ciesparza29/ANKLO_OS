@@ -23,6 +23,14 @@ import {
 
 const STATE_SCHEMA_VERSION = 8;
 const TRUST_HASH_PATTERN = /^[a-f0-9]{64}$/u;
+
+export interface ControlStateInspection {
+  readonly databaseExists: boolean;
+  readonly quarantineMarkerActive: boolean;
+  readonly globalKillSwitchActive: boolean;
+  readonly runKillSwitchActive: boolean;
+  readonly runQuarantined: boolean;
+}
 const BUSY_TIMEOUT_MS = 5_000;
 
 export type PersistedWorkPackageReference = Readonly<{
@@ -735,6 +743,77 @@ export class SqliteStateStore implements StateStore {
       }
       throw error;
     }
+  }
+  static inspectControlStateReadOnly(
+    databasePath: string,
+    runId?: string,
+  ): ControlStateInspection {
+    const dbExists = databasePath !== ":memory:" && existsSync(databasePath);
+    const quarantineMarkerPath =
+      databasePath === ":memory:" ? null : `${databasePath}.quarantine.json`;
+    const quarantineMarkerActive = Boolean(
+      quarantineMarkerPath && existsSync(quarantineMarkerPath),
+    );
+
+    let globalKillSwitchActive = false;
+    let runKillSwitchActive = false;
+    let runQuarantined = false;
+
+    if (dbExists) {
+      let store: SqliteStateStore | null = null;
+      try {
+        store = SqliteStateStore.openReadOnly(databasePath);
+
+        // Verify control_flags table exists exactly once.
+        const tableCheck = store.#db
+          .prepare(
+            `SELECT COUNT(*) AS cnt FROM sqlite_master WHERE type = 'table' AND name = 'control_flags'`,
+          )
+          .get() as { cnt: number } | undefined;
+
+        if (!tableCheck || tableCheck.cnt !== 1) {
+          throw new Error(
+            "StateStore structurally invalid: control_flags table missing or duplicated",
+          );
+        }
+
+        // The real schema uses scope (TEXT PK) and active (INTEGER).
+        // scope = 'GLOBAL' for the global kill switch.
+        // scope = 'RUN:<runId>' for per-run quarantine.
+        const globalRow = store.#db
+          .prepare(`SELECT active FROM control_flags WHERE scope = 'GLOBAL'`)
+          .get() as { active: number } | undefined;
+
+        if (globalRow && Number(globalRow.active) === 1) {
+          globalKillSwitchActive = true;
+        }
+
+        if (runId) {
+          const runRow = store.#db
+            .prepare(`SELECT active FROM control_flags WHERE scope = ?`)
+            .get(`RUN:${runId}`) as { active: number } | undefined;
+
+          if (runRow && Number(runRow.active) === 1) {
+            runKillSwitchActive = true;
+            runQuarantined = true;
+          }
+        }
+      } finally {
+        try {
+          store?.close();
+        } catch {
+          // ignore close errors
+        }
+      }
+    }
+
+    return Object.freeze({
+      databaseExists: dbExists,
+      quarantineMarkerActive,
+      globalKillSwitchActive,
+      runKillSwitchActive,
+      runQuarantined,
+    });
   }
 
   static open(databasePath: string): SqliteStateStore {
