@@ -340,8 +340,27 @@ function requirePositiveInteger(value: unknown, field: string): number {
 
 function requireCanonicalUtc(value: unknown, field: string): string {
   const text = requireString(value, field);
+  const isoUtcPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u;
+  if (!isoUtcPattern.test(text)) {
+    fail(
+      "INVALID_WORK_PACKAGE_SCHEMA",
+      `${field} must be a canonical UTC timestamp`,
+    );
+  }
+
   const epoch = Date.parse(text);
-  if (!Number.isFinite(epoch) || new Date(epoch).toISOString() !== text) {
+  if (!Number.isFinite(epoch)) {
+    fail(
+      "INVALID_WORK_PACKAGE_SCHEMA",
+      `${field} must be a canonical UTC timestamp`,
+    );
+  }
+
+  const canonical = new Date(epoch).toISOString();
+  const normalizedInput = text.includes(".")
+    ? text
+    : text.replace(/Z$/u, ".000Z");
+  if (canonical !== normalizedInput) {
     fail(
       "INVALID_WORK_PACKAGE_SCHEMA",
       `${field} must be a canonical UTC timestamp`,

@@ -141,6 +141,44 @@ describe("immutable work packages", () => {
     };
   }
 
+  it("accepts and preserves canonical UTC approval timestamps with seconds or milliseconds", () => {
+    for (const timestamp of [
+      "2026-08-03T19:23:43Z",
+      "2026-08-03T19:23:43.000Z",
+    ]) {
+      const pkg = createWorkPackage({
+        ...sampleInput,
+        planApprovalBinding: {
+          ...sampleInput.planApprovalBinding,
+          approvalCommentId: 5_170_765_755,
+          approvalCommentUpdatedAt: timestamp,
+        },
+      });
+
+      expect(pkg.planApprovalBinding.approvalCommentId).toBe(5_170_765_755);
+      expect(pkg.planApprovalBinding.approvalCommentUpdatedAt).toBe(timestamp);
+    }
+
+    for (const timestamp of [
+      "2026-08-03T19:23:43.0Z",
+      "2026-08-03T19:23:43.00Z",
+      "2026-08-03T19:23:43.0000Z",
+      "2026-08-03T19:23:43+00:00",
+      "2026-02-30T19:23:43Z",
+      "texto-no-fecha",
+    ]) {
+      expect(() =>
+        createWorkPackage({
+          ...sampleInput,
+          planApprovalBinding: {
+            ...sampleInput.planApprovalBinding,
+            approvalCommentUpdatedAt: timestamp,
+          },
+        }),
+      ).toThrow(/canonical UTC timestamp/u);
+    }
+  });
+
   it("rejects absolute, traversal, empty, backslash and NUL paths", () => {
     expect(normalizePackagePath("src/index.ts")).toBe("src/index.ts");
     for (const invalid of [
