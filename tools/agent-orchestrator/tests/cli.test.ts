@@ -52,4 +52,121 @@ describe("orchestrator CLI", () => {
     expect(output.result).toBe("DRY_RUN");
     expect(output.data.effects_executed).toBe(0);
   });
+
+  it("pilot:preflight runs in dry-run mode and executes zero effects", () => {
+    const result = run(["pilot:preflight", "--format", "json"]);
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout) as {
+      result: string;
+      dry_run: boolean;
+      schema_version: string;
+      data: {
+        effects_executed: number;
+        issue_number: number;
+        repository: string;
+        checks: unknown[];
+      };
+    };
+    expect(output.result).toBe("DRY_RUN");
+    expect(output.dry_run).toBe(true);
+    expect(output.schema_version).toBe("1.0");
+    expect(output.data.effects_executed).toBe(0);
+    expect(output.data.issue_number).toBe(27);
+    expect(output.data.repository).toBe("Ciesparza29/ANKLO_OS");
+    expect(Array.isArray(output.data.checks)).toBe(true);
+  });
+
+  it("pilot:preflight rejects --apply before executing any effect", () => {
+    const result = run(["pilot:preflight", "--apply", "--format", "json"]);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain("APPLY_NOT_SUPPORTED");
+  });
+
+  it.each([
+    ["--issue-body", "test-body"],
+    [
+      "--issue-body-sha256",
+      "a377072c738955d9582cd0cc84f716a6082cf0f0c8ad42c0f27d75f1d5a899e8",
+    ],
+    ["--head-sha", "633c98c6effd7523a623c6e3a180e9dc06b877cf"],
+    ["--current-branch", "main"],
+    ["--worktree-clean"],
+    ["--index-clean"],
+    ["--ready-to-dispatch-exists"],
+    ["--ready-to-dispatch-untracked"],
+  ])("pilot:preflight rejects obsolete flag %s", (...args: string[]) => {
+    const result = run(["pilot:preflight", ...args]);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain("Unknown option");
+  });
+
+  it("pilot:preflight rejects --state-db with INVALID_ARGUMENT", () => {
+    const result = run([
+      "pilot:preflight",
+      "--format",
+      "json",
+      "--state-db",
+      "/tmp/operator-controlled.sqlite",
+    ]);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain("INVALID_ARGUMENT");
+  });
+
+  it("run:bind-target dry-run is diagnostic only and executes zero effects", () => {
+    const result = run([
+      "run:bind-target",
+      "--format",
+      "json",
+      "--run-id",
+      "test-run-id",
+      "--target-repository",
+      "Ciesparza29/ANKLO_OS",
+      "--target-remote",
+      "origin",
+      "--target-branch",
+      "feat/27-supervised-pilot-v11",
+      "--target-head-sha",
+      "633c98c6effd7523a623c6e3a180e9dc06b877cf",
+      "--worktree-id",
+      "test-worktree-id",
+      "--authorized-files-hash",
+      "f67ed6526c1c0bfe68ec1d24ffd048a98438282a13ea7467c272fdcb2314a69f",
+      "--package-hash",
+      "c1219cd5807c269a1730262c46f1cd346b76680eb079688c7daf02852c8257b3",
+    ]);
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout) as {
+      result: string;
+      data: { effects_executed: number };
+    };
+    expect(output.result).toBe("DRY_RUN");
+    expect(output.data.effects_executed).toBe(0);
+  });
+
+  it("run:bind-target --apply is rejected before opening or mutating StateStore", () => {
+    const result = run([
+      "run:bind-target",
+      "--apply",
+      "--format",
+      "json",
+      "--run-id",
+      "test-run-id",
+      "--target-repository",
+      "Ciesparza29/ANKLO_OS",
+      "--target-remote",
+      "origin",
+      "--target-branch",
+      "feat/27-supervised-pilot-v11",
+      "--target-head-sha",
+      "633c98c6effd7523a623c6e3a180e9dc06b877cf",
+      "--worktree-id",
+      "test-worktree-id",
+      "--authorized-files-hash",
+      "f67ed6526c1c0bfe68ec1d24ffd048a98438282a13ea7467c272fdcb2314a69f",
+      "--package-hash",
+      "c1219cd5807c269a1730262c46f1cd346b76680eb079688c7daf02852c8257b3",
+    ]);
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain("APPLY_NOT_SUPPORTED");
+  });
 });

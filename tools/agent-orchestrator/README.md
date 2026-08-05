@@ -42,7 +42,33 @@ conceder capacidad de merge, despliegue, shell arbitrario ni acceso a producció
   aprobaciones, leases y auditoría del `StateStore`;
 - análisis AST de todas las invocaciones permitidas de `node:child_process`.
 
-El runtime mutable se ubica en `~/.anklo-orchestrator/`. Cualquier override de
+## Issue #27 — Pilot Supervisado (supervised-pilot-v11)
+
+Añade el comando `pilot:preflight` y endurece `run:bind-target`:
+
+- `pilot:preflight` — diagnóstico de solo lectura que verifica: identidad de
+  repositorio, issue #27 abierto, SHA base exacto, rama `main`, limpieza de
+  árbol y área de preparación, kill switch inactivo y capacidades denegadas.
+
+  El archivo `READY_TO_DISPATCH` (sentinel):
+  - debe existir;
+  - debe ser un archivo regular;
+  - no puede ser un enlace simbólico;
+  - debe tener tamaño cero;
+  - debe ser untracked;
+  - no puede estar staged;
+  - no puede existir en HEAD;
+  - debe ser la única entrada devuelta por `git status --porcelain=v1`.
+
+  El estado completamente limpio sin el sentinel se considera un fallo fail-closed.
+  Calcula el SHA-256 del cuerpo del issue sin normalizar los bytes. Rechaza `--apply`. No crea directorios,
+  SQLite, ramas, worktrees, archivos, leases, aprobaciones ni eventos de
+  auditoría.
+
+- `run:bind-target --apply` — rechazado antes de abrir o mutar el `StateStore`.
+  El modo dry-run permanece diagnóstico y ejecuta cero efectos.
+
+El runtime mutable se ubica en el directorio de configuración canónica. Cualquier override de
 SQLite debe permanecer dentro de ese runtime, fuera del repositorio y sin
 atravesar enlaces simbólicos.
 
@@ -52,7 +78,18 @@ atravesar enlaces simbólicos.
 pnpm orchestrator diagnose --format json
 pnpm orchestrator plan --issue 24 --format json
 pnpm orchestrator state:init --apply --format json
+pnpm orchestrator pilot:preflight --format json
 ```
+
+Los hechos se obtienen de fuentes canónicas:
+
+- repositorio y Git real;
+- Issue #27 mediante lectura autenticada de GitHub;
+- hash canónico del cuerpo;
+- configuración efectiva;
+- StateStore ubicado mediante la configuración canónica.
+
+El comando debe ejecutarse desde el clon canónico de `main` que contenga únicamente el sentinel permitido.
 
 Los comandos con efectos permanecen en `dry-run` salvo que reciban `--apply`.
 La transición a estados protegidos exige la aprobación estructurada vigente y
@@ -76,5 +113,4 @@ arbitrario.
   `--ephemeral`, `--json`, `--output-schema` y `--cd`.
 - Los outputs de procesos se limitan durante la ejecución y se sanitizan antes
   de ser retornados o auditados.
-- La evidencia externa se conserva bajo
-  `~/.anklo-orchestrator/reviews/issue-24/subphase-16.5-remediation-r1/`.
+- La evidencia externa se conserva de forma estructurada.

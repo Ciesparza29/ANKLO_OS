@@ -5,6 +5,7 @@ export * from "./errors.ts";
 export * from "./github-adapter.ts";
 export * from "./orchestrator.ts";
 export * from "./phase-16-5.ts";
+export * from "./pilot-preflight.ts";
 export * from "./policy.ts";
 export * from "./state-machine.ts";
 export * from "./state-store.ts";

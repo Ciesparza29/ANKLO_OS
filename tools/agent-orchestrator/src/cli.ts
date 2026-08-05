@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import {
@@ -29,6 +30,7 @@ import {
 } from "./orchestrator.ts";
 import { assertCapability, DENIED_CAPABILITIES } from "./policy.ts";
 import { isRunState } from "./state-machine.ts";
+import { runPilotPreflight, type PreflightInput } from "./pilot-preflight.ts";
 
 const COMMANDS = [
   "diagnose",
@@ -46,6 +48,7 @@ const COMMANDS = [
   "lease:recover",
   "approval:validate",
   "safety:activate",
+  "pilot:preflight",
 ] as const;
 type Command = (typeof COMMANDS)[number];
 
@@ -181,6 +184,16 @@ export async function runCli(
       );
     }
     format = parsed.values.format;
+
+    if (
+      command === "pilot:preflight" &&
+      parsed.values["state-db"] !== undefined
+    ) {
+      throw new OrchestratorError(
+        "INVALID_ARGUMENT",
+        "pilot:preflight does not accept --state-db; the canonical configured StateStore path is mandatory",
+      );
+    }
 
     const cwd = context.cwd ?? process.cwd();
     const config = await loadConfig(parsed.values.config, cwd);
@@ -415,6 +428,16 @@ export async function runCli(
 
     if (command === "run:bind-target") {
       assertCapability(config.allowedCapabilities, "STATE_WRITE");
+      // Reject --apply before touching StateStore: run:bind-target never
+      // opens or mutates the state database when --apply is supplied without
+      // a fully-structured plan-approval binding provided through the normal
+      // approval:validate pathway.
+      if (apply) {
+        throw new OrchestratorError(
+          "APPLY_NOT_SUPPORTED",
+          "run:bind-target --apply is rejected: use approval:validate to record a plan approval binding before binding the implementation target",
+        );
+      }
       const runId = requireString(parsed.values["run-id"], "run-id");
       const targetRepository = requireString(
         parsed.values["target-repository"],
@@ -447,53 +470,22 @@ export async function runCli(
         requireString(parsed.values["package-hash"], "package-hash"),
         "package-hash",
       );
-      if (!apply) {
-        writeSuccess({
-          command,
-          dryRun: true,
-          format,
-          data: {
-            run_id: runId,
-            target_repository: targetRepository,
-            target_remote: targetRemote,
-            target_branch: targetBranch,
-            target_head_sha: targetHeadSha,
-            worktree_id: worktreeId,
-            authorized_files_hash: authorizedFilesHash,
-            package_hash: packageHash,
-            effects_executed: 0,
-          },
-        });
-        return 0;
-      }
-      const store = openStateStore(config, parsed.values["state-db"]);
-      try {
-        const run = store.bindImplementationTarget({
-          runId,
-          targetRepository,
-          targetRemote,
-          targetBranch,
-          targetHeadSha,
-          worktreeId,
-          authorizedFilesHash,
-          packageHash,
-          planApprovalBinding: {
-            approvalEventId: "manual-bind",
-            approvalCommentId: 0,
-            approvalAuthorLogin: "cli",
-            approvalCommentUpdatedAt: new Date().toISOString(),
-            expiresAt: new Date(Date.now() + 86400000).toISOString(),
-            baseSha: "base",
-            planHash: "plan",
-            sourceSnapshotHash: "snap",
-          },
-          correlationId: runId,
-          now: new Date(),
-        });
-        writeSuccess({ command, dryRun: false, format, data: { run } });
-      } finally {
-        store.close();
-      }
+      writeSuccess({
+        command,
+        dryRun: true,
+        format,
+        data: {
+          run_id: runId,
+          target_repository: targetRepository,
+          target_remote: targetRemote,
+          target_branch: targetBranch,
+          target_head_sha: targetHeadSha,
+          worktree_id: worktreeId,
+          authorized_files_hash: authorizedFilesHash,
+          package_hash: packageHash,
+          effects_executed: 0,
+        },
+      });
       return 0;
     }
 
@@ -753,6 +745,46 @@ export async function runCli(
       } finally {
         store.close();
       }
+      return 0;
+    }
+
+    if (command === "pilot:preflight") {
+      assertCapability(config.allowedCapabilities, "DIAGNOSE");
+      if (apply) {
+        throw new OrchestratorError(
+          "APPLY_NOT_SUPPORTED",
+          "pilot:preflight is diagnostic-only and never executes effects",
+        );
+      }
+      const repoRoot = cwd;
+      const ghConfigDirectory = process.env.GH_CONFIG_DIR ?? "/nonexistent";
+      const databasePath = resolveStateDatabasePath(config, undefined);
+
+      const preflightInput: PreflightInput = {
+        repoRoot,
+        ghConfigDirectory,
+        databasePath,
+        allowedCapabilities: config.allowedCapabilities,
+      };
+
+      const report = await runPilotPreflight(preflightInput, false);
+
+      writeSuccess({
+        command,
+        dryRun: true,
+        format,
+        data: {
+          schema_version: report.schemaVersion,
+          issue_number: report.issueNumber,
+          repository: report.repository,
+          base_sha: report.baseSha,
+          branch: report.branch,
+          issue_body_sha256: report.issueBodySha256,
+          checks: report.checks,
+          passed: report.passed,
+          effects_executed: report.effectsExecuted,
+        },
+      });
       return 0;
     }
 
